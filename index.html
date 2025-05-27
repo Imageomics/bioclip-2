@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <title>BioCLIP 2: Emergent Properties from Scaling Hierarchical Contrastive Learning</title>
+  <link rel="stylesheet" href="css/main.css" />
+  <link rel="icon" href="images/icons/favicon.ico" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Display:ital,wght@0,400;0,700;1,400;1,700&display=swap" rel="stylesheet">
+</head>
+
+<body>
+  <main>
+    <div style="text-align: center">
+      Previous Version: <a href="https://imageomics.github.io/bioclip">BioCLIP</a>
+      <details>
+        <summary>And More Research</summary>
+        <div class="options">
+          <p><a href="https://github.com/Imageomics/INTR">INTR</a></p>
+          <p><a href="https://mmmu-benchmark.github.io">MMMU Benchmark</a></p>
+          <p><a href="https://osu-nlp-group.github.io/Mind2Web">Mind2Web</a></p>
+          <p><a href="https://osu-nlp-group.github.io/MagicBrush">MagicBrush</a></p>
+        </div>
+      </details>
+    </div>
+    <h1>BioCLIP 2: Emergent Properties from Scaling Hierarchical Contrastive Learning</h1>
+    <p class="centered">
+      <sup>1</sup><a href="https://vimar-gu.github.io/">Jianyang Gu</a>,
+      <sup>1</sup><a href="https://samuelstevens.me/">Samuel Stevens</a>,
+      <sup>1</sup><a href="https://egrace479.github.io/">Elizabeth G Campolongo</a>,
+      <sup>1</sup><a href="https://www.linkedin.com/in/thompson-m-j/">Matthew J Thompson</a>,
+      <sup>1</sup><a href="https://www.linkedin.com/in/net-zhang/">Net Zhang</a>,
+      <sup>1</sup><a href="https://work4cs.github.io/">Jiaman (Lisa) Wu</a>,
+      <sup>1</sup><a href="https://www.linkedin.com/in/andrey-kopanev/">Andrei Kopanev</a>,
+      <sup>1</sup><a href="https://zheda-mai.github.io/">Zheda Mai</a>,
+      <sup>2</sup><a href="http://www.alexwhitebiology.com/">Alexander E. White</a>,
+      <sup>3</sup><a href="https://www.linkedin.com/in/balhoff/">James Balhoff</a>,
+      <sup>4</sup><a href="https://www.faculty.uci.edu/profile/?facultyId=6769">Wasila M Dahdul</a>,
+      <sup>5</sup><a href="https://dir.princeton.edu/">Daniel Robenstein</a>,
+      <sup>6</sup><a href="https://scholars.duke.edu/person/Hilmar.Lapp/research">Hilmar Lapp</a>,
+      <sup>1</sup><a href="https://cse.osu.edu/people/berger-wolf.1">Tanya Berger-Wolf</a>,
+      <sup>1</sup><a href="https://sites.google.com/view/wei-lun-harry-chao">Wei-Lun (Harry) Chao</a>,
+      <sup>1</sup><a href="https://ysu1989.github.io/">Yu Su</a>
+    </p>
+    <p class="centered">
+      <sup>1</sup>The Ohio State University,
+      <sup>2</sup>Smithsonian Institution,
+      <sup>3</sup>University of North Carolina at Chapel Hill,
+      <sup>4</sup>University of California, Irvine
+      <sup>5</sup>Princeton University
+      <sup>6</sup>Duke University
+    </p>
+    <p class="text-sm centered">
+      <a href="mailto:gu.1220@osu.edu">gu.1220@osu.edu</a>, <a
+        href="mailto:su.809@osu.edu">su.809@osu.edu</a>
+    </p>
+
+    <p class="centered">
+      <a class="pill-button" href="">
+        <img src="images/icons/huggingface.svg" /> Data (Coming Soon)
+      </a>
+      <a class="pill-button" href="https://huggingface.co/imageomics/bioclip2">
+        <img src="images/icons/huggingface.svg" /> Models (Coming Soon)
+      </a>
+      <a class="pill-button" href="">
+        <img src="images/icons/arxiv.svg" /> Paper (Coming Soon)
+      </a>
+    </p>
+    <p class="centered">
+      <a class="pill-button" href="https://github.com/Imageomics/BioCLIP">
+        <img src="images/icons/github.svg" /> BioCLIP 2 Code (Coming Soon)
+      </a>
+      <a class="pill-button" href="">
+        <img src="images/icons/github.svg" /> TreeOfLife-toolbox (Coming Soon)
+      </a>
+    </p>
+    <p class="centered">
+      <a class="pill-button" href="https://github.com/Imageomics/TaxonoPy">
+        <img src="images/icons/github.svg" /> TaxonoPy
+      </a>
+      <a class="pill-button" href="https://github.com/Imageomics/distributed-downloader">
+        <img src="images/icons/github.svg" /> distributed-downloader
+      </a>
+    </p>
+    <figure>
+      <img srcset="" src="images/teaser.svg" alt="" loading="lazy">
+      <figcaption>
+        Figure 1: While BioCLIP 2 is trained to distinguish between species, it demonstrates emergent properties from scaling hierarchical contrastive learning.
+        <b>Left</b>: The embeddings of Darwin's finches arrange themselves by beak size from left to right.
+        The embedding distribution aligns with ecological relationships between species. 
+        <b>Right</b>: The intra-species variations are preserved in subspaces orthogonal to the inter-species variations
+        (the black lines point from the mean embedding of one variant to that of the other variant).
+      </figcaption>
+    </figure>
+
+    <h2 class="banded">BioCLIP 2</h2>
+
+    <p>
+      Foundation models trained at scale exhibit emergent properties beyond their initial training objectives.
+      In this work, we ask a simple but intriguing question: <i>what properties emerge if we scale up the hierarchical contrastive training in <a href="https://imageomics.github.io/bioclip">BioCLIP</a></i>?
+    </p>
+    <p>
+      We curate and release TreeOfLife-200M (the largest and most diverse available dataset of biology images).
+      The new BioCLIP 2 model is evaluated on a diverse set of <a href="#evaluation">biological tasks</a>. 
+      Through training at scale, BioCLIP 2 improves species classification by 18.1% over BioCLIP.
+      More importantly, we demonstrate that BioCLIP 2 generalize to diverse biological questions <b>beyond species classification</b> solely through species-level supersvision. 
+      <a href="#intrinsic">Further Analysis</a> reveals that BioCLIP 2 acquires two emergent properties through scaling up hierarchical contrastive learning:
+      <b>inter-species ecological alignment</b> and <b>intra-species variation separation</b>.
+    </p>
+        
+    <h3>Demo</h3>
+    Coming soon!
+    <!-- <script type="module" src="https://gradio.s3-us-west-2.amazonaws.com/4.36.1/gradio.js"></script>
+    <gradio-app src="https://imageomics-bioclip-demo.hf.space"></gradio-app> -->
+
+    <h2 class="banded" id="evaluation">Experiments</h2>
+    <p>
+      We first evaluate BioCLIP 2 on species classification tasks.
+      The compared baselines include <a href="https://github.com/mlfoundations/open_clip">CLIP</a> (ViT-L/14 pre-trained on LAION-2B),
+      <a href="https://github.com/mlfoundations/open_clip">SigLIP</a> (ViT-L/16 resolution 256),
+      <a href="https://huggingface.co/BGLab/BioTrove-CLIP">BioTrove-CLIP</a>,
+      and <a href="https://huggingface.co/imageomics/bioclip">BioCLIP</a>.
+      We show the zero-shot classification results in the following table.
+      Bold indicates the best performance for each task.
+      Check out the <a href="">paper</a> for one-shot and five-shot results.
+    </p>
+    <p>
+      <b>BioCLIP 2 outperforms BioCLIP by 18.0% and provides a 30.1% improvement over the CLIP model that serves as weight initialization.</b>
+    </p>
+    <p><i>Scroll to see all results.</i></p>
+    <table cellpadding="0" cellspacing="0">
+      <thead>
+        <tr>
+          <th rowspan="2" class="sticky border-right">Model</th>
+          <th colspan="5" class="no-border-bottom border-right">Animals</th>
+          <th colspan="4" class="no-border-bottom border-right">Plants & Fungi</th>
+          <th rowspan="2" class="border-right">Rare Species</th>
+          <th rowspan="2">Mean</th>
+        </tr>
+        <tr>
+          <th class="no-border-top border-left">NABirds</th>
+          <th class="no-border-top">Plankton</th>
+          <th class="no-border-top">Insects</th>
+          <th class="no-border-top">Insects 2</th>
+          <th class="no-border-top border-right">Camera Trap</th>
+          <th class="no-border-top">PlantNet</th>
+          <th class="no-border-top">Fungi</th>
+          <th class="no-border-top">PlantVillage</th>
+          <th class="no-border-top border-right">Med. Leaf</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="sticky border-right">CLIP (ViT-L/14)</td>
+          <td>66.5</td>
+          <td>1.3</td>
+          <td>9.0</td>
+          <td>11.7</td>
+          <td class="border-right">29.5</td>
+          <td>61.7</td>
+          <td>7.6</td>
+          <td>6.5</td>
+          <td class="border-right">25.6</td>
+          <td class="border-right">35.2</td>
+          <td>25.5</td>
+        </tr>
+        <tr>
+          <td class="sticky border-right">SigLIP</td>
+          <td>61.7</td>
+          <td>2.4</td>
+          <td>27.3</td>
+          <td>20.7</td>
+          <td class="border-right">33.7</td>
+          <td>81.8</td>
+          <td>36.9</td>
+          <td><b>28.5</b></td>
+          <td class="border-right">54.5</td>
+          <td class="border-right">47.6</td>
+          <td>39.5</td>
+        </tr>
+        <tr>
+          <td class="sticky border-right">BioTrove-CLIP</td>
+          <td>39.4</td>
+          <td>1.0</td>
+          <td>20.5</td>
+          <td>15.7</td>
+          <td class="border-right">10.7</td>
+          <td>64.4</td>
+          <td>38.2</td>
+          <td>15.7</td>
+          <td class="border-right">31.6</td>
+          <td class="border-right">24.6</td>
+          <td>26.2</td>
+        </tr>
+        <tr>
+          <td class="sticky border-right">BioCLIP</td>
+          <td>58.8</td>
+          <td><b>6.1</b></td>
+          <td>34.9</td>
+          <td>20.5</td>
+          <td class="border-right">31.7</td>
+          <td>88.2</td>
+          <td>40.9</td>
+          <td>19.0</td>
+          <td class="border-right">38.5</td>
+          <td class="border-right">37.1</td>
+          <td>37.6</td>
+        </tr>
+        <tr>
+          <td class="sticky border-right">BioCLIP 2</td>
+          <td><b>74.9</b></td>
+          <td>3.9</td>
+          <td><b>55.3</b></td>
+          <td><b>27.7</b></td>
+          <td class="border-right"><b>53.9</b></td>
+          <td><b>96.8</b></td>
+          <td><b>83.8</b></td>
+          <td>25.1</td>
+          <td class="border-right"><b>57.8</b></td>
+          <td class="border-right"><b>76.8</b></td>
+          <td><b>55.6</b></td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      Biology's organization extends beyond species taxonomy. 
+      We collect and benchmark models on five visual benchmarks that push past species ID:
+      <a href="https://fishnet-2023.github.io/">FishNet</a> (habitat classification),
+      <a href="https://github.com/visipedia/newt">NeWT</a> (trait prediction),
+      <a href="https://cvml.ista.ac.at/AwA2/">AwA2</a> (trait prediction),
+      <a href="https://www.kaggle.com/c/herbarium-2019-fgvc6">Herbarium19</a> (new-species identification),
+      and <a href="https://github.com/pratikkayal/PlantDoc-Dataset">PlantDoc</a> (agricultural disease detection).
+    </p>
+    <p><b>Although no information on these tasks is explicitly described during training, BioCLIP 2 yields a 10.2% performance gap over DINOv2, which is commonly used for diverse visual tasks.</b></p>
+    <table cellpadding="0" cellspacing="0">
+      <thead>
+        <tr>
+          <th rowspan="2" class="sticky border-right">Model</th>
+          <th colspan="3" class="no-border-bottom border-right">Animals</th>
+          <th colspan="2" class="no-border-bottom border-right">Plants</th>
+          <th rowspan="2" class="large-padding">Mean</th>
+        </tr>
+        <tr>
+          <th class="no-border-top border-left large-padding">FishNet</th>
+          <th class="no-border-top large-padding">NeWT</th>
+          <th class="no-border-top border-right large-padding">AwA2</th>
+          <th class="no-border-top large-padding">Herbarium19</th>
+          <th class="no-border-top border-right large-padding">PlantDoc</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="sticky border-right">CLIP (ViT-L/14)</td>
+          <td class="large-padding">27.9</td>
+          <td class="large-padding">83.4</td>
+          <td class="border-right large-padding">61.6</td>
+          <td class="large-padding">18.2</td>
+          <td class="border-right large-padding">22.3</td>
+          <td class="large-padding">42.7</td>
+        </tr>
+        <tr>
+          <td class="sticky border-right">SigLIP</td>
+          <td class="large-padding">31.9</td>
+          <td class="large-padding">83.2</td>
+          <td class="border-right large-padding">67.3</td>
+          <td class="large-padding">18.6</td>
+          <td class="border-right large-padding">28.2</td>
+          <td class="large-padding">45.8</td>
+        </tr>
+        <tr>
+          <td class="sticky border-right">Supervised-IN21K</td>
+          <td class="large-padding">29.4</td>
+          <td class="large-padding">75.8</td>
+          <td class="border-right large-padding">52.7</td>
+          <td class="large-padding">14.9</td>
+          <td class="border-right large-padding">25.1</td>
+          <td class="large-padding">39.6</td>
+        </tr>
+        <tr>
+          <td class="sticky border-right">DINOv2</td>
+          <td class="large-padding">37.4</td>
+          <td class="large-padding">83.7</td>
+          <td class="border-right large-padding">48.6</td>
+          <td class="large-padding">28.1</td>
+          <td class="border-right large-padding">38.6</td>
+          <td class="large-padding">47.3</td>
+        </tr>
+        <tr>
+          <td class="sticky border-right">BioTrove-CLIP</td>
+          <td class="large-padding">22.1</td>
+          <td class="large-padding">82.5</td>
+          <td class="border-right large-padding">45.7</td>
+          <td class="large-padding">20.4</td>
+          <td class="border-right large-padding">37.7</td>
+          <td class="large-padding">41.7</td>
+        </tr>
+        <tr>
+          <td class="sticky border-right">BioCLIP</td>
+          <td class="large-padding">30.1</td>
+          <td class="large-padding">82.7</td>
+          <td class="border-right large-padding">65.9</td>
+          <td class="large-padding">26.8</td>
+          <td class="border-right large-padding">39.5</td>
+          <td class="large-padding">49.0</td>
+        </tr>
+        <tr>
+          <td class="sticky border-right">BioCLIP 2</td>
+          <td class="large-padding"><b>39.8</b></td>
+          <td class="large-padding"><b>89.1</b></td>
+          <td class="border-right large-padding"><b>69.5</b></td>
+          <td class="large-padding"><b>48.6</b></td>
+          <td class="border-right large-padding"><b>40.4</b></td>
+          <td class="large-padding"><b>57.5</b></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2 id="intrinsic" class="banded">Emergent Properties</h2>
+    <p>
+      Why can BioCLIP 2 perform well when none of the information is explicitly described during training?
+      We look into the embedding space of BioCLIP 2 and identify two emergent properties that generalize beyond species classification as the training scales up.
+    </p>
+    <p>
+      The embedding space of different species <i>aligns with their ecological and functional relationships</i>.
+      In the following figure, we show the t-SNE plots of FishNet test set at different training scales.
+      Larger training scales progressively separate the species that can live in freshwater and cannot.
+    </p>
+    <figure>
+      <img srcset="" src="images/fishnet.svg" alt="" loading="lazy">
+      <figcaption>
+        Figure 2: As the training data scales, freshwater fish becomes more distinct from other fish, despite no explicit supersvision is provided during training.
+      </figcaption>
+    </figure>
+    <p>
+      The intra-species variations are <i>preserved and separated</i>. In the following figure, we show the embeddings of three species from NeWT exhibiting life-stage variation. 
+      In the top row (2D plots), the intra-species variations are preserved and better separated than the baseline CLIP model.
+      The bottom row (3D plots) further reveals that the intra-species variations lie in subspaces orthogonal to the species span (gray planes).
+      The orthonality improves with data scale. 
+    </p>
+    <figure>
+      <img srcset="" src="images/ages.svg" alt="" loading="lazy">
+      <figcaption>
+        Figure 3: As training scales, intra-species variations are preserved and better separated in subspaces orthogonal to the inter-species differences. 
+        The 3D space is constructed by the first two principal components of embeddings and an additional orthogonal dimension.
+        Straight lines connect the mean embeddings of two variants of the same species.
+        Check out our <a href="">paper</a> for more visualizations.
+      </figcaption>
+    </figure>
+
+    <h2 class="banded" id="dataset">Dataset</h2>
+    <p>
+      TreeOfLife-200M is the largest and most diverse available dataset of biology organismal images.
+      We combine images from four providers, The Global Biodiversity Information Facility (<a href="https://GBIF.org">GBIF</a>), BIOSCAN-5M,
+      Encyclopedia of Life (<a href="https://eol.org">EOL</a>, accessed Aug 2024), and FathomNet to create a dataset of
+      214M images, spanning 952K taxa.
+      <!-- We provide a train/val split, and will release the dataset under a CC-BY-NC license. -->
+      We train BioCLIP 2 on TreeOfLife-200M and release the weights for public use.
+    </p>
+
+    <h2>Reference</h2>
+    <p>Please cite our papers if you use our code, data, model or results.</p>
+    <pre class="reference"></pre>
+    <pre class="reference">@inproceedings{stevens2024bioclip,
+  title = {{B}io{CLIP}: A Vision Foundation Model for the Tree of Life}, 
+  author = {Samuel Stevens and Jiaman Wu and Matthew J Thompson and Elizabeth G Campolongo and Chan Hee Song and David Edward Carlyn and Li Dong and Wasila M Dahdul and Charles Stewart and Tanya Berger-Wolf and Wei-Lun Chao and Yu Su},
+  booktitle={Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
+  year = {2024},
+  pages = {19412-19424}
+}</pre>
+    <pre class="reference">@misc{rare_species_2023,
+  author = {Samuel Stevens and Jiaman Wu and Matthew J Thompson and Elizabeth G Campolongo and Chan Hee Song and David Edward Carlyn and Li Dong and Wasila M Dahdul and Charles Stewart and Tanya Berger-Wolf and Wei-Lun Chao and Yu Su},
+  title = {Rare Species},
+  year = {2023},
+  url = {https://huggingface.co/datasets/imageomics/rare-species},
+  doi = {10.57967/hf/1981},
+  publisher = {Hugging Face}
+}</pre>
+    <p>Also consider citing OpenCLIP, GBIF, BIOSCAN-5M, EOL, and FathomNet:</p>
+    <pre class="reference">@software{ilharco_gabriel_2021_5143773,
+  author={Ilharco, Gabriel and Wortsman, Mitchell and Wightman, Ross and Gordon, Cade and Carlini, Nicholas and Taori, Rohan and Dave, Achal and Shankar, Vaishaal and Namkoong, Hongseok and Miller, John and Hajishirzi, Hannaneh and Farhadi, Ali and Schmidt, Ludwig},
+  title={OpenCLIP},
+  year={2021},
+  doi={10.5281/zenodo.5143773},
+}</pre>
+    <pre class="reference">@misc{GBIF,
+  title = {{GBIF} Occurrence Download},
+  author = {GBIF.org},
+  doi = {10.15468/DL.BFV433},
+  url = {https://doi.org/10.15468/dl.bfv433},
+  keywords = {GBIF, biodiversity, species occurrences},
+  publisher = {The Global Biodiversity Information Facility},
+  month = {May},
+  year = {2024},
+  copyright = {Creative Commons Attribution Non Commercial 4.0 International}
+}</pre>
+    <pre class="reference">@inproceedings{gharaee2024bioscan5m,
+  title={{BIOSCAN-5M}: A Multimodal Dataset for Insect Biodiversity},
+  author={Zahra Gharaee and Scott C. Lowe and ZeMing Gong and Pablo Millan Arias
+      and Nicholas Pellegrino and Austin T. Wang and Joakim Bruslund Haurum
+      and Iuliia Zarubiieva and Lila Kari and Dirk Steinke and Graham W. Taylor
+      and Paul Fieguth and Angel X. Chang
+  },
+  booktitle={NeurIPS},
+  pages={36285--36313},
+  year={2024},
+  volume={37}
+}</pre>
+  <pre class="reference">@misc{eol,
+  author = {{Encyclopedia of Life (EOL)}},
+  url = {https://eol.org},
+  note = {Accessed August 2024}
+}</pre>
+    <pre class="reference">@article{katija_fathomnet_2022,
+  title = {{FathomNet}: {A} global image database for enabling artificial intelligence in the ocean},
+  author = {Katija, Kakani and Orenstein, Eric and Schlining, Brian and Lundsten, Lonny and Barnard, Kevin and Sainz, Giovanna and Boulais, Oceane and Cromwell, Megan and Butler, Erin and Woodward, Benjamin and Bell, Katherine L. C.},
+  journal = {Scientific Reports},
+  volume = {12},
+  number = {1},
+  pages = {15914},
+  issn = {2045-2322},
+  url = {https://www.nature.com/articles/s41598-022-19939-2},
+  doi = {10.1038/s41598-022-19939-2},
+  month = sep,
+  year = {2022},
+}</pre>
+
+    <h2 class="banded">Acknowledgements</h2>
+    <p>
+      We would like to thank Zhiyuan Tao, Shuheng Wang, Ziheng Zhang, and Leanna House for their help with the TreeOfLife-200M dataset, Charles (Chuck) Stewart, Sara Beery, and other <a href="https://imageomics.osu.edu/about/team">Imageomics Team</a> members for their constructive feedback.
+      We also thank Sergiu Sanielevici, Tom Maiden, and TJ Olesky for their dedicated assistance with arranging the necessary computational resources.
+    </p>
+    <p>
+      We are grateful to Kakani Katija and Dirk Steinke for helpful conversations regarding use and integration of FathomNet and BIOSCAN-5M, respectively, as well as Steven Formel and Markus Döring for GBIF. We thank Marie Grosjean for comparative methods for filtering citizen science images and Dylan Verheul for assistance with acquiring images from observation.org from GBIF.
+      We thank Suren Byna for a helpful conversation on early dataset design decisions.
+      We thank Doug Johnson for his collaboration in hosting this large dataset on the Ohio Supercomputer Center research storage file system.
+    </p>
+    <p>
+      Our research is supported by NSF OAC 2118240 and resources from the Ohio Supercomputer Center.
+      This work used the Bridges-2 system, which is supported by NSF award number OAC-1928147 at the Pittsburgh Supercomputing Center (PSC), under the auspices of the NAIRR Pilot program.
+    </p>
+
+  </main>
+  <script>
+    const details = document.querySelector("details");
+    document.addEventListener("click", function (e) {
+      if (!details.contains(e.target)) {
+        details.removeAttribute("open");
+      }
+    });
+  </script>
+</body>
+
+</html>
