@@ -1,36 +1,45 @@
 ---
-abstract: "Images of the natural world are an abundant source of biological
-  information. There are many computational methods and tools, particularly
-  computer vision, for extracting information from images. However, existing
-  methods consist of bespoke models, not adaptable or extendable from their
-  targeted task to new questions, contexts, and datasets. We thus develop the
-  first large-scale multimodal model, BioCLIP, for general biology questions on
-  images. We leverage the unique properties of biology (abundance and variety of
-  images and availability of rich structured biological knowledge) as the the
-  application domain for computer vision."
+abstract: "Foundation models trained at scale exhibit remarkable emergent behaviors, 
+  learning new capabilities beyond their initial training objectives. We find such emergent 
+  behaviors in biological vision models via large-scale contrastive vision-language training. 
+  To achieve this, we first curate TreeOfLife-200M, comprising 214 million images of living 
+  organisms, the largest and most diverse biological organism image dataset to date. We then 
+  train BioCLIP 2 on TreeOfLife-200M to distinguish different species. Despite the narrow 
+  training objective, BioCLIP 2 yields extraordinary accuracy when applied to various biological 
+  visual tasks such as habitat classification and trait prediction. We identify emergent 
+  properties in the learned embedding space of BioCLIP 2. At the inter-species level, the 
+  embedding distribution of different species aligns closely with functional and ecological 
+  meanings (e.g. beak sizes and habitats). At the intra-species level, instead of being diminished, 
+  the intra-species variations (e.g. life stages and sexes) are preserved and better separated 
+  in subspaces orthogonal to inter-species distinctions. We provide formal proof and analyses 
+  to explain why hierarchical supervision and contrastive objectives encourage these emergent 
+  properties. Crucially, our results reveal that these properties become increasingly significant 
+  with larger-scale training data, leading to a biologically meaningful embedding space."
 authors:
+  - family-names: Gu
+    given-names: Jianyang
   - family-names: Stevens
     given-names: Samuel
-  - family-names: Wu
-    given-names: Jiaman
-  - family-names: Thompson
-    given-names: "Matthew J."
   - family-names: Campolongo
     given-names: "Elizabeth G."
-  - family-names: Song
-    given-names: "Chan Hee"
-  - family-names: Carlyn
-    given-names: "David Edward"
+  - family-names: Thompson
+    given-names: "Matthew J."
+  - family-names: Zhang
+    given-names: Net
+  - family-names: Wu
+    given-names: Jiaman
+  - family-names: Mai
+    given-names: Zheda
 cff-version: 1.2.0
-date-released: "2024-09-19"
+date-released: "2025" # update for release
 identifiers:
-  - doi: "10.5281/zenodo.10895870"
-  - description: "The GitHub release URL of tag v1.0.2."
+  # - doi: "" # add on release
+  - description: "The GitHub release URL of tag v1.0.0."
     type: url
-    value: "https://github.com/Imageomics/bioclip/releases/tag/v1.0.2"
-  - description: "The GitHub URL of the commit tagged with v1.0.2."
+    value: "https://github.com/Imageomics/bioclip-2/releases/tag/v1.0.0"
+  - description: "The GitHub URL of the commit tagged with v1.0.0."
     type: url
-    value: "https://github.com/Imageomics/bioclip/tree/b750fa8758d16e78ccc3de7ab86c1523d5de6148"
+    value: "https://github.com/Imageomics/bioclip-2/tree/" # Add commit hash on release
 keywords:
   - clip
   - biology
@@ -46,43 +55,62 @@ keywords:
   - multimodal
   - "knowledge-guided"
 license: MIT
-message: "If you use this software, please cite both the article from preferred-citation and the software itself."
-repository-code: "https://github.com/Imageomics/bioclip"
-title: BioCLIP
-version: 1.0.2
+message: "If you use this software, please cite both the article and the software itself."
+repository-code: "https://github.com/Imageomics/bioclip-2"
+title: "BioCLIP 2"
+version: 1.0.0
 type: software
-preferred-citation:
-  type: conference-paper
-  authors:
-    - family-names: Stevens
-      given-names: Samuel
-    - family-names: Wu
-      given-names: Jiaman
-    - family-names: Thompson
-      given-names: "Matthew J."
-    - family-names: Campolongo
-      given-names: "Elizabeth G."
-    - family-names: Song
-      given-names: "Chan Hee"
-    - family-names: Carlyn
-      given-names: "David Edward"
-    - family-names: Dong
-      given-names: Li
-    - family-names: Dahdul
-      given-names: "Wasila M"
-    - family-names: Stewart
-      given-names: Charles
-    - family-names: "Berger-Wolf"
-      given-names: Tanya
-    - family-names: Chao
-      given-names: "Wei-Lun"
-    - family-names: Su
-      given-names: Yu
-  title: "BioCLIP: A Vision Foundation Model for the Tree of Life"
-  year: 2024
-  pages: "19412-19424"
-  collection-title: "Proceedings of IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)"
 references:
+  - authors:
+      - family-names: Stevens
+        given-names: Samuel
+      - family-names: Wu
+        given-names: Jiaman
+      - family-names: Thompson
+        given-names: "Matthew J."
+      - family-names: Campolongo
+        given-names: "Elizabeth G."
+      - family-names: Song
+        given-names: "Chan Hee"
+      - family-names: Carlyn
+        given-names: "David Edward"
+    date-released: "2024-09-19"
+    doi: "10.5281/zenodo.10895870"
+    license: MIT
+    repository-code: "https://github.com/Imageomics/bioclip"
+    title: BioCLIP
+    version: 1.0.2
+    type: software
+  - authors:
+      - family-names: Stevens
+        given-names: Samuel
+      - family-names: Wu
+        given-names: Jiaman
+      - family-names: Thompson
+        given-names: "Matthew J."
+      - family-names: Campolongo
+        given-names: "Elizabeth G."
+      - family-names: Song
+        given-names: "Chan Hee"
+      - family-names: Carlyn
+        given-names: "David Edward"
+      - family-names: Dong
+        given-names: Li
+      - family-names: Dahdul
+        given-names: "Wasila M"
+      - family-names: Stewart
+        given-names: Charles
+      - family-names: "Berger-Wolf"
+        given-names: Tanya
+      - family-names: Chao
+        given-names: "Wei-Lun"
+      - family-names: Su
+        given-names: Yu
+    title: "BioCLIP: A Vision Foundation Model for the Tree of Life"
+    year: 2024
+    pages: "19412-19424"
+    collection-title: "Proceedings of IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)"
+    type: coference-paper
   - authors:
       - family-names: Ilharco
         given-names: Gabriel
