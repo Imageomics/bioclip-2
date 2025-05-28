@@ -6,6 +6,21 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
 
   <title>BioCLIP 2: Emergent Properties from Scaling Hierarchical Contrastive Learning</title>
+
+  <!-- https://ogimage.click/ -->
+  <meta name="og:title" content="BioCLIP 2" />
+  <meta name="og:description" content="Emergent Properties from Scaling Hierarchical Contrastive Learning" />
+  <meta name="og:url" content="https://imageomics.github.io/bioclip-2/" />
+  <meta name="og:image" content="https://imageomics.github.io/bioclip-2/images/biocip2-ogimage.jpg" />
+
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:image" content="https://imageomics.github.io/bioclip-2/images/biocip2-ogimage.jpg" />
+
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="BioCLIP 2" />
+
+  <meta name="theme-color" content="#939936">
+
   <link rel="stylesheet" href="css/main.css" />
   <link rel="icon" href="images/icons/favicon.ico" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -87,7 +102,9 @@
       </a>
     </p>
     <figure>
-      <img srcset="" src="images/teaser.svg" alt="" loading="lazy">
+      <a href="images/teaser.svg">
+        <img srcset="" src="images/teaser.svg" alt="" loading="lazy">
+      </a>
       <figcaption>
         Figure 1: While BioCLIP 2 is trained to distinguish between species, it demonstrates emergent properties from scaling hierarchical contrastive learning.
         <b>Left</b>: The embeddings of Darwin's finches arrange themselves by beak size from left to right.
@@ -108,7 +125,7 @@
       The new BioCLIP 2 model is evaluated on a diverse set of <a href="#evaluation">biological tasks</a>. 
       Through training at scale, BioCLIP 2 improves species classification by 18.1% over BioCLIP.
       More importantly, we demonstrate that BioCLIP 2 generalizes to diverse biological questions <b>beyond species classification</b> solely through species-level supersvision. 
-      <a href="#intrinsic">Further Analysis</a> reveals that BioCLIP 2 acquires two emergent properties through scaling up hierarchical contrastive learning:
+      <a href="#intrinsic">Further analysis</a> reveals that BioCLIP 2 acquires two emergent properties through scaling up hierarchical contrastive learning:
       <b>inter-species ecological alignment</b> and <b>intra-species variation separation</b>.
     </p>
         
@@ -120,16 +137,15 @@
     <h2 class="banded" id="evaluation">Experiments</h2>
     <p>
       We first evaluate BioCLIP 2 on species classification tasks.
-      The compared baselines include <a href="https://huggingface.co/laion/CLIP-ViT-L-14-laion2B-s32B-b82K">CLIP</a> (ViT-L/14 pre-trained on LAION-2B),
-      <a href="https://huggingface.co/google/siglip-large-patch16-256">SigLIP</a> (ViT-L/16 resolution 256),
-      <a href="https://huggingface.co/BGLab/BioTrove-CLIP">BioTrove-CLIP</a>,
-      and <a href="https://huggingface.co/imageomics/bioclip">BioCLIP</a>.
-      We show the zero-shot classification results in the following table.
+      We compared against <a href="https://huggingface.co/laion/CLIP-ViT-L-14-laion2B-s32B-b82K">CLIP</a> (ViT-L/14 pre-trained on LAION-2B),
+      <a href="https://huggingface.co/google/siglip-large-patch16-256">SigLIP</a> (ViT-L/16, 256px),
+      <a href="https://huggingface.co/BGLab/BioTrove-CLIP">BioTrove-CLIP</a> (ViT-B/16),
+      and <a href="https://huggingface.co/imageomics/bioclip">BioCLIP</a> (ViT-B/16) on <i>zero-shot classification</i>.
       Bold indicates the best performance for each task.
       Check out the <a href="">paper</a> for one-shot and five-shot results.
     </p>
     <p>
-      <b>BioCLIP 2 outperforms BioCLIP by 18.0% and provides a 30.1% improvement over the CLIP model that serves as weight initialization.</b>
+      <b>BioCLIP 2 outperforms BioCLIP by 18.0% and provides a 30.1% improvement over the CLIP model used as weight initialization.</b>
     </p>
     <p><i>Scroll to see all results.</i></p>
     <table cellpadding="0" cellspacing="0">
@@ -321,7 +337,7 @@
 
     <h2 id="intrinsic" class="banded">Emergent Properties</h2>
     <p>
-      Why can BioCLIP 2 perform well when none of the information is explicitly described during training?
+      Why does BioCLIP 2 work well when none of the information is explicitly described during training?
       We look into the embedding space of BioCLIP 2 and identify two emergent properties that generalize beyond species classification as the training scales up.
     </p>
     <p>
@@ -330,7 +346,9 @@
       Larger training scales progressively separate the species that can live in freshwater from those that cannot.
     </p>
     <figure>
-      <img srcset="" src="images/fishnet.svg" alt="" loading="lazy">
+      <a href="images/fishnet.svg">
+        <img srcset="" src="images/fishnet.svg" alt="" loading="lazy">
+      </a>
       <figcaption>
         Figure 2: As the training data scales, freshwater fish become more distinct from other fish, despite no explicit supersvision being provided during training.
       </figcaption>
@@ -342,7 +360,9 @@
       The orthogonality improves with data scale. 
     </p>
     <figure>
-      <img srcset="" src="images/ages.svg" alt="" loading="lazy">
+      <a href="images/ages.svg">
+        <img srcset="" src="images/ages.svg" alt="" loading="lazy">
+      </a>
       <figcaption>
         Figure 3: As training scales, intra-species variations are preserved and better separated in subspaces orthogonal to the inter-species differences. 
         The 3D space is constructed by the first two principal components of embeddings and an additional orthogonal dimension.
