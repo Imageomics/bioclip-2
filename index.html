@@ -60,10 +60,10 @@
     </p>
 
     <p class="centered">
-      <a class="pill-button" href="">
+      <a class="pill-button" href="https://huggingface.co/datasets/imageomics/TreeOfLife-200M">
         <img src="images/icons/huggingface.svg" /> Data (Coming Soon)
       </a>
-      <a class="pill-button" href="https://huggingface.co/imageomics/bioclip2">
+      <a class="pill-button" href="https://huggingface.co/imageomics/bioclip-2">
         <img src="images/icons/huggingface.svg" /> Models (Coming Soon)
       </a>
       <a class="pill-button" href="">
@@ -71,10 +71,10 @@
       </a>
     </p>
     <p class="centered">
-      <a class="pill-button" href="https://github.com/Imageomics/BioCLIP">
+      <a class="pill-button" href="https://github.com/Imageomics/bioclip-2">
         <img src="images/icons/github.svg" /> BioCLIP 2 Code (Coming Soon)
       </a>
-      <a class="pill-button" href="">
+      <a class="pill-button" href="https://github.com/Imageomics/TreeOfLife-toolbox">
         <img src="images/icons/github.svg" /> TreeOfLife-toolbox (Coming Soon)
       </a>
     </p>
@@ -107,7 +107,7 @@
       We curate and release TreeOfLife-200M (the largest and most diverse available dataset of biology images).
       The new BioCLIP 2 model is evaluated on a diverse set of <a href="#evaluation">biological tasks</a>. 
       Through training at scale, BioCLIP 2 improves species classification by 18.1% over BioCLIP.
-      More importantly, we demonstrate that BioCLIP 2 generalize to diverse biological questions <b>beyond species classification</b> solely through species-level supersvision. 
+      More importantly, we demonstrate that BioCLIP 2 generalizes to diverse biological questions <b>beyond species classification</b> solely through species-level supersvision. 
       <a href="#intrinsic">Further Analysis</a> reveals that BioCLIP 2 acquires two emergent properties through scaling up hierarchical contrastive learning:
       <b>inter-species ecological alignment</b> and <b>intra-species variation separation</b>.
     </p>
@@ -120,8 +120,8 @@
     <h2 class="banded" id="evaluation">Experiments</h2>
     <p>
       We first evaluate BioCLIP 2 on species classification tasks.
-      The compared baselines include <a href="https://github.com/mlfoundations/open_clip">CLIP</a> (ViT-L/14 pre-trained on LAION-2B),
-      <a href="https://github.com/mlfoundations/open_clip">SigLIP</a> (ViT-L/16 resolution 256),
+      The compared baselines include <a href="https://huggingface.co/laion/CLIP-ViT-L-14-laion2B-s32B-b82K">CLIP</a> (ViT-L/14 pre-trained on LAION-2B),
+      <a href="https://huggingface.co/google/siglip-large-patch16-256">SigLIP</a> (ViT-L/16 resolution 256),
       <a href="https://huggingface.co/BGLab/BioTrove-CLIP">BioTrove-CLIP</a>,
       and <a href="https://huggingface.co/imageomics/bioclip">BioCLIP</a>.
       We show the zero-shot classification results in the following table.
@@ -326,20 +326,20 @@
     </p>
     <p>
       The embedding space of different species <i>aligns with their ecological and functional relationships</i>.
-      In the following figure, we show the t-SNE plots of FishNet test set at different training scales.
-      Larger training scales progressively separate the species that can live in freshwater and cannot.
+      In the following figure, we show t-SNE plots of the FishNet test set at different training scales.
+      Larger training scales progressively separate the species that can live in freshwater from those that cannot.
     </p>
     <figure>
       <img srcset="" src="images/fishnet.svg" alt="" loading="lazy">
       <figcaption>
-        Figure 2: As the training data scales, freshwater fish becomes more distinct from other fish, despite no explicit supersvision is provided during training.
+        Figure 2: As the training data scales, freshwater fish become more distinct from other fish, despite no explicit supersvision being provided during training.
       </figcaption>
     </figure>
     <p>
       The intra-species variations are <i>preserved and separated</i>. In the following figure, we show the embeddings of three species from NeWT exhibiting life-stage variation. 
       In the top row (2D plots), the intra-species variations are preserved and better separated than the baseline CLIP model.
       The bottom row (3D plots) further reveals that the intra-species variations lie in subspaces orthogonal to the species span (gray planes).
-      The orthonality improves with data scale. 
+      The orthogonality improves with data scale. 
     </p>
     <figure>
       <img srcset="" src="images/ages.svg" alt="" loading="lazy">
@@ -354,30 +354,48 @@
     <h2 class="banded" id="dataset">Dataset</h2>
     <p>
       TreeOfLife-200M is the largest and most diverse available dataset of biology organismal images.
-      We combine images from four providers, The Global Biodiversity Information Facility (<a href="https://GBIF.org">GBIF</a>), BIOSCAN-5M,
-      Encyclopedia of Life (<a href="https://eol.org">EOL</a>, accessed Aug 2024), and FathomNet to create a dataset of
+      We combine images from four providers, The Global Biodiversity Information Facility (<a href="https://GBIF.org">GBIF</a>), <a href="https://github.com/bioscan-ml/BIOSCAN-5M">BIOSCAN-5M</a>,
+      Encyclopedia of Life (<a href="https://eol.org">EOL</a>, accessed Aug 2024), and <a href="https://database.fathomnet.org/fathomnet/#/">FathomNet</a> to create a dataset of
       214M images, spanning 952K taxa.
       <!-- We provide a train/val split, and will release the dataset under a CC-BY-NC license. -->
       We train BioCLIP 2 on TreeOfLife-200M and release the weights for public use.
     </p>
 
     <h2>Reference</h2>
-    <p>Please cite our papers if you use our code, data, model or results.</p>
+    <p>Please cite our paper and associated artifact(s) if you use our code, data, model or results.</p>
     <pre class="reference"></pre>
-    <pre class="reference">@inproceedings{stevens2024bioclip,
-  title = {{B}io{CLIP}: A Vision Foundation Model for the Tree of Life}, 
-  author = {Samuel Stevens and Jiaman Wu and Matthew J Thompson and Elizabeth G Campolongo and Chan Hee Song and David Edward Carlyn and Li Dong and Wasila M Dahdul and Charles Stewart and Tanya Berger-Wolf and Wei-Lun Chao and Yu Su},
-  booktitle={Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
-  year = {2024},
-  pages = {19412-19424}
+    <pre class="reference">@article{gu2025bioclip,
+      title = {{B}io{CLIP} 2: Emergent Properties from Scaling Hierarchical Contrastive Learning}, 
+      author = {Jianyang Gu and Samuel Stevens and Elizabeth G Campolongo and Matthew J Thompson and Net Zhang and Jiaman Wu and Andrei Kopanev and Zheda Mai and Alexander E. White and James Balhoff and Wasila M Dahdul and Daniel Rubenstein and Hilmar Lapp and Tanya Berger-Wolf and Wei-Lun Chao and Yu Su},
+      year = {2025},
+      eprint = {},
+      archivePrefix = {arXiv},
+      primaryClass = {cs.CV}
 }</pre>
-    <pre class="reference">@misc{rare_species_2023,
-  author = {Samuel Stevens and Jiaman Wu and Matthew J Thompson and Elizabeth G Campolongo and Chan Hee Song and David Edward Carlyn and Li Dong and Wasila M Dahdul and Charles Stewart and Tanya Berger-Wolf and Wei-Lun Chao and Yu Su},
-  title = {Rare Species},
-  year = {2023},
-  url = {https://huggingface.co/datasets/imageomics/rare-species},
-  doi = {10.57967/hf/1981},
-  publisher = {Hugging Face}
+    <pre class="reference">@dataset{treeoflife_200m,
+      title = {{T}ree{O}f{L}ife-200{M}}, 
+      author = {Jianyang Gu and Samuel Stevens and Elizabeth G Campolongo and Matthew J Thompson and Net Zhang and Jiaman Wu and Andrei Kopanev and Zheda Mai and Alexander E. White and James Balhoff and Wasila M Dahdul and Daniel Rubenstein and Hilmar Lapp and Tanya Berger-Wolf and Wei-Lun Chao and Yu Su},
+      year = {2025},
+      url = {https://huggingface.co/datasets/imageomics/TreeOfLife-200M},
+      doi = {},
+      publisher = {Hugging Face}
+}</pre>
+    <pre class="reference">@software{Gu_BioCLIP_2,
+      author = {Gu, Jianyang and Stevens, Samuel and Campolongo, Elizabeth G. and Thompson, Matthew J. and Zhang, Net and Wu, Jiaman and Mai, Zheda},
+      license = {MIT},
+      title = {{BioCLIP 2}},
+      url = {https://github.com/Imageomics/bioclip-2},
+      version = {1.0.0}
+}</pre>
+    <pre class="reference">@software{Gu_BioCLIP_2_model,
+      author = {Jianyang Gu and Samuel Stevens and Elizabeth G Campolongo and Matthew J Thompson and Net Zhang and Jiaman Wu and Andrei Kopanev and Zheda Mai and Alexander E. White and James Balhoff and Wasila M Dahdul and Daniel Rubenstein and Hilmar Lapp and Tanya Berger-Wolf and Wei-Lun Chao and Yu Su},
+      license = {MIT},
+      title = {{BioCLIP 2}},
+      url = {https://huggingface.co/imageomics/bioclip-2},
+      version = {1.0.0},
+      doi = {},
+      publisher = {Hugging Face},
+      year = {2025}
 }</pre>
     <p>Also consider citing OpenCLIP, GBIF, BIOSCAN-5M, EOL, and FathomNet:</p>
     <pre class="reference">@software{ilharco_gabriel_2021_5143773,
@@ -430,7 +448,7 @@
 
     <h2 class="banded">Acknowledgements</h2>
     <p>
-      We would like to thank Zhiyuan Tao, Shuheng Wang, Ziheng Zhang, and Leanna House for their help with the TreeOfLife-200M dataset, Charles (Chuck) Stewart, Sara Beery, and other <a href="https://imageomics.osu.edu/about/team">Imageomics Team</a> members for their constructive feedback.
+      We would like to thank Zhiyuan Tao, Shuheng Wang, Ziheng Zhang, Zhongwei Wang, and Leanna House for their help with the TreeOfLife-200M dataset, Charles (Chuck) Stewart, Sara Beery, and other <a href="https://imageomics.osu.edu/about/team">Imageomics Team</a> members for their constructive feedback.
       We also thank Sergiu Sanielevici, Tom Maiden, and TJ Olesky for their dedicated assistance with arranging the necessary computational resources.
     </p>
     <p>
@@ -441,6 +459,7 @@
     <p>
       Our research is supported by NSF OAC 2118240 and resources from the Ohio Supercomputer Center.
       This work used the Bridges-2 system, which is supported by NSF award number OAC-1928147 at the Pittsburgh Supercomputing Center (PSC), under the auspices of the NAIRR Pilot program.
+      Any opinions, findings and conclusions or recommendations expressed in this material are those of the author(s) and do not necessarily reflect the views of the National Science Foundation.
     </p>
 
   </main>
