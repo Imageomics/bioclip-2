@@ -21,7 +21,8 @@
 
   <meta name="theme-color" content="#939936">
 
-  <link rel="stylesheet" href="css/main.css" />
+  <link href="./css/mobile.css" rel="stylesheet" type="text/css" media="screen and (max-width: 800px)">
+  <link href="./css/main.css" rel="stylesheet" type="text/css" media="screen and (min-width: 800px)">
   <link rel="icon" href="images/icons/favicon.ico" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -76,20 +77,20 @@
 
     <p class="centered">
       <a class="pill-button" href="https://huggingface.co/datasets/imageomics/TreeOfLife-200M">
-        <img src="images/icons/huggingface.svg" /> Data (Coming Soon)
+        <img src="images/icons/huggingface.svg" /> Data
       </a>
       <a class="pill-button" href="https://huggingface.co/imageomics/bioclip-2">
-        <img src="images/icons/huggingface.svg" /> Models (Coming Soon)
+        <img src="images/icons/huggingface.svg" /> Model
       </a>
       <a class="pill-button" href="">
-        <img src="images/icons/arxiv.svg" /> Paper (Coming Soon)
+        <img src="images/icons/arxiv.svg" /> Paper
       </a>
     </p>
     <p class="centered">
-      <a class="pill-button" href="https://github.com/Imageomics/bioclip-2">
+      <a class="pill-button wide" href="https://github.com/Imageomics/bioclip-2">
         <img src="images/icons/github.svg" /> BioCLIP 2 Code (Coming Soon)
       </a>
-      <a class="pill-button" href="https://github.com/Imageomics/TreeOfLife-toolbox">
+      <a class="pill-button wide" href="https://github.com/Imageomics/TreeOfLife-toolbox">
         <img src="images/icons/github.svg" /> TreeOfLife-toolbox (Coming Soon)
       </a>
     </p>
@@ -102,7 +103,7 @@
       </a>
     </p>
     <figure>
-      <a href="images/teaser.svg">
+      <a href="images/teaser.pdf">
         <img srcset="" src="images/teaser.svg" alt="" loading="lazy">
       </a>
       <figcaption>
@@ -118,7 +119,7 @@
 
     <p>
       Foundation models trained at scale exhibit emergent properties beyond their initial training objectives.
-      In this work, we ask a simple but intriguing question: <i>what properties emerge if we scale up the hierarchical contrastive training in <a href="https://imageomics.github.io/bioclip">BioCLIP</a></i>?
+      In this work, we look at the biology imagery and ask a simple but intriguing question: <i>what properties emerge if we scale up the hierarchical contrastive training in <a href="https://imageomics.github.io/bioclip">BioCLIP</a></i>?
     </p>
     <p>
       We curate and release TreeOfLife-200M (the largest and most diverse available dataset of biology images).
@@ -346,7 +347,7 @@
       Larger training scales progressively separate the species that can live in freshwater from those that cannot.
     </p>
     <figure>
-      <a href="images/fishnet.svg">
+      <a href="images/fishnet.pdf">
         <img srcset="" src="images/fishnet.svg" alt="" loading="lazy">
       </a>
       <figcaption>
@@ -360,7 +361,7 @@
       The orthogonality improves with data scale. 
     </p>
     <figure>
-      <a href="images/ages.svg">
+      <a href="images/ages.pdf">
         <img srcset="" src="images/ages.svg" alt="" loading="lazy">
       </a>
       <figcaption>
