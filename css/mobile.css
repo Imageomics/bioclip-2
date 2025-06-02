@@ -188,7 +188,8 @@ figcaption {
   display:inline-block;
   align-items:center;
   padding:0.5em 1em;
-  margin-bottom: 0.5em;
+  margin-top: 0.2em;
+  margin-bottom: 0.2em;
 }
 
 .pill-button > span {
