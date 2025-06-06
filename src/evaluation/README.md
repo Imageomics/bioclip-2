@@ -24,4 +24,8 @@
  - `trace`: `torch.jit.trace` the model for inference / eval only. Default is False.
  - `debug`: If true, more information is logged. Default is False.
  - `no-set-device-rank`: Don't set device index from local rank (when CUDA_VISIBLE_DEVICES restricted to one per proc). Default is False.
+ - `lr`: Set the learning rate. Default is 1e-4.
+ - `epochs`: Number of epochs to train for. Default is 100.
+ - `n_repeats`: Number of times to repeat for simpleshot. Default is 5.
+ - `eval_every`: Set n: Evaluate every n epochs and log evaluation. Default is 10.
  - `seed`: Default random seed, defaults to 0.
