@@ -23,6 +23,8 @@ try:
         RepetitionPenaltyLogitsProcessor,
         MinLengthLogitsProcessor,
         MaxLengthCriteria,
+        StopStringCriteria,
+        EosTokenCriteria,
         StoppingCriteriaList
     )
 
@@ -76,6 +78,14 @@ def _build_text_decoder_tower(
     return decoder
 
 
+def _token_to_tensor(token_id, device: str = "cpu") -> torch.Tensor:
+    if not isinstance(token_id, torch.Tensor):
+        if isinstance(token_id, int):
+            token_id = [token_id]
+        token_id = torch.tensor(token_id, device=device)
+    return token_id
+
+
 class CoCa(nn.Module):
     def __init__(
             self,
@@ -84,6 +94,9 @@ class CoCa(nn.Module):
             text_cfg: CLIPTextCfg,
             vision_cfg: CLIPVisionCfg,
             quick_gelu: bool = False,
+            init_logit_scale: float = np.log(1 / 0.07),
+            init_logit_bias: Optional[float] = None,
+            nonscalar_logit_scale: bool = False,
             cast_dtype: Optional[torch.dtype] = None,
             pad_id: int = 0,
     ):
@@ -119,50 +132,74 @@ class CoCa(nn.Module):
             cast_dtype=cast_dtype,
         )
 
-        self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
+        lshape = [1] if nonscalar_logit_scale else []
+        self.logit_scale = nn.Parameter(torch.ones(lshape) * init_logit_scale)
+        if init_logit_bias is not None:
+            self.logit_bias = nn.Parameter(torch.ones(lshape) * init_logit_bias)
+        else:
+            self.logit_bias = None
         self.pad_id = pad_id
 
+        self.context_length = multimodal_cfg.context_length
+
     @torch.jit.ignore
-    def set_grad_checkpointing(self, enable=True):
+    def set_grad_checkpointing(self, enable: bool = True):
         self.visual.set_grad_checkpointing(enable)
         self.text.set_grad_checkpointing(enable)
         self.text_decoder.set_grad_checkpointing(enable)
 
-    def _encode_image(self, images, normalize=True):
+    def _encode_image(self, images, normalize: bool = True):
         image_latent, tokens_embs = self.visual(images)
         image_latent = F.normalize(image_latent, dim=-1) if normalize else image_latent
         return image_latent, tokens_embs
 
-    def _encode_text(self, text, normalize=True, embed_cls=True):
-        text = text[:, :-1] if embed_cls else text # make space for CLS token
+    def _encode_text(self, text, normalize: bool = True):
         text_latent, token_emb = self.text(text)
         text_latent = F.normalize(text_latent, dim=-1) if normalize else text_latent
         return text_latent, token_emb
 
-    def encode_image(self, images, normalize=True):
+    def encode_image(self, images, normalize: bool = True):
         image_latent, _ = self._encode_image(images, normalize=normalize)
         return image_latent
 
-    def encode_text(self, text, normalize=True, embed_cls=True):
-        text_latent, _ = self._encode_text(text, normalize=normalize, embed_cls=embed_cls)
+    def encode_text(self, text, normalize: bool = True):
+        text_latent, _ = self._encode_text(text, normalize=normalize)
         return text_latent
 
-    def forward(self, image, text, embed_cls=True, image_latent=None, image_embs=None):
-        text_latent, token_embs = self._encode_text(text, embed_cls=embed_cls)
+    def forward(
+            self,
+            image,
+            text: Optional[torch.Tensor] = None,
+            image_latent: Optional[torch.Tensor] = None,
+            image_embs: Optional[torch.Tensor] = None,
+            output_labels: bool = True,
+    ):
         if image_latent is None or image_embs is None:
             image_latent, image_embs = self._encode_image(image)
 
-        # TODO: add assertion to avoid bugs?
-        labels = text[:, -token_embs.shape[1]:]
+        if text is None:
+            return {"image_features": image_latent, "image_embs": image_embs}
+
+        text_latent, token_embs = self._encode_text(text)
+
+        # FIXME this isn't an ideal solution, would like to improve -RW
+        labels: Optional[torch.Tensor] = text[:, 1:] if output_labels else None
+        if output_labels:
+            # align text_embs and thus logits with labels for teacher-forcing caption loss
+            token_embs = token_embs[:, :-1]
 
         logits = self.text_decoder(image_embs, token_embs)
-        return {
+        out_dict = {
             "image_features": image_latent,
             "text_features": text_latent,
             "logits": logits,
-            "labels": labels,
             "logit_scale": self.logit_scale.exp()
         }
+        if labels is not None:
+            out_dict["labels"] = labels
+        if self.logit_bias is not None:
+            out_dict["logit_bias"] = self.logit_bias
+        return out_dict
 
     def generate(
         self,
@@ -188,10 +225,11 @@ class CoCa(nn.Module):
         # https://huggingface.co/docs/transformers/main/en/main_classes/text_generation
         assert _has_transformers, "Please install transformers for generate functionality. `pip install transformers`."
         assert seq_len > min_seq_len, "seq_len must be larger than min_seq_len"
+        device = image.device
 
         with torch.no_grad():
-            sot_token_id = 49406 if sot_token_id is None else sot_token_id
-            eos_token_id = 49407 if eos_token_id is None else eos_token_id
+            sot_token_id = _token_to_tensor(49406 if sot_token_id is None else sot_token_id, device=device)
+            eos_token_id = _token_to_tensor(49407 if eos_token_id is None else eos_token_id, device=device)
             pad_token_id = self.pad_id if pad_token_id is None else pad_token_id
             logit_processor = LogitsProcessorList(
                 [
@@ -202,16 +240,11 @@ class CoCa(nn.Module):
 
             if stopping_criteria is None:
                 stopping_criteria = [MaxLengthCriteria(max_length=seq_len)]
-
-            stopping_criteria = StoppingCriteriaList(
-                stopping_criteria
-            )
-
-            device = image.device
+            stopping_criteria = StoppingCriteriaList(stopping_criteria)
 
             if generation_type == "beam_search":
                 output = self._generate_beamsearch(
-                    image_inputs = image,
+                    image_inputs=image,
                     pad_token_id=pad_token_id,
                     eos_token_id=eos_token_id,
                     sot_token_id=sot_token_id,
@@ -222,8 +255,11 @@ class CoCa(nn.Module):
                     logit_processor=logit_processor,
                 )
                 if fixed_output_length and output.shape[1] < seq_len:
-                    return torch.cat(
-                        (output, torch.ones(output.shape[0], seq_len-output.shape[1], device=device, dtype=output.dtype) * self.pad_id),
+                    pad_len = seq_len - output.shape[1]
+                    return torch.cat((
+                            output,
+                            torch.ones(output.shape[0], pad_len, device=device, dtype=output.dtype) * pad_token_id
+                        ),
                         dim=1
                     )
                 return output
@@ -249,14 +285,19 @@ class CoCa(nn.Module):
             if num_dims == 1:
                 text = text[None, :]
 
-            cur_len = text.shape[1]
             self.eval()
             out = text
 
             while True:
                 x = out[:, -max_seq_len:]
                 cur_len = x.shape[1]
-                logits = self(image, x, image_latent=image_latent, image_embs=image_embs, embed_cls=False)["logits"][:, -1]
+                logits = self(
+                    image,
+                    x,
+                    image_latent=image_latent,
+                    image_embs=image_embs,
+                    output_labels=False,
+                )["logits"][:, -1]
                 mask = (out[:, -1] == eos_token_id) | (out[:, -1] == pad_token_id)
                 sample = torch.ones((out.shape[0], 1), device=device, dtype=torch.long) * pad_token_id
 
@@ -278,7 +319,7 @@ class CoCa(nn.Module):
 
                 cur_len += 1
 
-                if stopping_criteria(out, None):
+                if all(stopping_criteria(out, None)):
                     break
 
             if num_dims == 1:
@@ -320,10 +361,10 @@ class CoCa(nn.Module):
             else logit_processor
         )
 
-        batch_size = len(beam_scorer._beam_hyps)
         num_beams = beam_scorer.num_beams
         num_beam_groups = beam_scorer.num_beam_groups
         num_sub_beams = num_beams // num_beam_groups
+        batch_size = len(beam_scorer._beam_hyps) // num_beam_groups
         batch_beam_size, cur_len = input_ids.shape
         beam_indices = None
 
@@ -351,9 +392,9 @@ class CoCa(nn.Module):
             outputs = self(
                 model_inputs['images'],
                 model_inputs['text'],
-                embed_cls=False,
                 image_latent=image_latent,
-                image_embs=image_embs
+                image_embs=image_embs,
+                output_labels=False,
             )
 
             for beam_group_idx in range(num_beam_groups):
@@ -400,6 +441,7 @@ class CoCa(nn.Module):
                     pad_token_id=pad_token_id,
                     eos_token_id=eos_token_id,
                     beam_indices=process_beam_indices,
+                    group_index=beam_group_idx,
                 )
                 beam_scores[batch_group_indices] = beam_outputs["next_beam_scores"]
                 beam_next_tokens = beam_outputs["next_beam_tokens"]
@@ -419,7 +461,7 @@ class CoCa(nn.Module):
 
             # increase cur_len
             cur_len = cur_len + 1
-            if beam_scorer.is_done or stopping_criteria(input_ids, None):
+            if beam_scorer.is_done or all(stopping_criteria(input_ids, None)):
                 break
 
         final_beam_indices = sum(beam_indices, ()) if beam_indices is not None else None
