@@ -16,29 +16,6 @@ def make_splits(directory) -> dict[str, list[str]]:
     random.seed(1337)
     shuffled = random.sample(classes, k=len(classes))
 
-    # Check that they're the same order on all machines
-    # err = "not reproducible"
-    # assert (
-    #     shuffled[0]
-    #     == "08737_Plantae_Tracheophyta_Magnoliopsida_Lamiales_Verbenaceae_Verbena_hastata"
-    # ), err
-    # assert (
-    #     shuffled[8000]
-    #     == "03011_Animalia_Chordata_Amphibia_Anura_Microhylidae_Kaloula_pulchra"
-    # ), err
-    # assert (
-    #     shuffled[8999]
-    #     == "02422_Animalia_Arthropoda_Insecta_Odonata_Gomphidae_Arigomphus_furcifer"
-    # ), err
-    # assert (
-    #     shuffled[9000]
-    #     == "01963_Animalia_Arthropoda_Insecta_Lepidoptera_Nymphalidae_Pyronia_bathseba"
-    # ), err
-    # assert (
-    #     shuffled[9999]
-    #     == "06333_Plantae_Tracheophyta_Liliopsida_Poales_Poaceae_Avena_fatua"
-    # ), err
-
     return {
         "pretraining": shuffled[:],
         "seen": shuffled[:],

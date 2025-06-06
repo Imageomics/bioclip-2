@@ -10,15 +10,16 @@ import torch.nn as nn
 
 try:
     import timm
-    from timm.models.layers import Mlp, to_2tuple
     try:
-        # old timm imports < 0.8.1
-        from timm.models.layers.attention_pool2d import RotAttentionPool2d
-        from timm.models.layers.attention_pool2d import AttentionPool2d as AbsAttentionPool2d
-    except ImportError:
         # new timm imports >= 0.8.1
         from timm.layers import RotAttentionPool2d
         from timm.layers import AttentionPool2d as AbsAttentionPool2d
+        from timm.layers import Mlp, to_2tuple
+    except ImportError as e:
+        # fallback, try old timm imports < 0.8.1
+        from timm.models.layers.attention_pool2d import RotAttentionPool2d
+        from timm.models.layers.attention_pool2d import AttentionPool2d as AbsAttentionPool2d
+        from timm.models.layers import Mlp, to_2tuple
 except ImportError:
     timm = None
 
@@ -27,7 +28,6 @@ from .utils import freeze_batch_norm_2d
 
 class TimmModel(nn.Module):
     """ timm model adapter
-    # FIXME this adapter is a work in progress, may change in ways that break weight compat
     """
 
     def __init__(
@@ -40,38 +40,65 @@ class TimmModel(nn.Module):
             proj_bias=False,
             drop=0.,
             drop_path=None,
+            patch_drop=None,
             pretrained=False,
+            is_continual=False,
     ):
         super().__init__()
         if timm is None:
             raise RuntimeError("Please `pip install timm` to use timm models.")
-
         self.image_size = to_2tuple(image_size)
+
+        # setup kwargs that may not be common across all models
         timm_kwargs = {}
         if drop_path is not None:
             timm_kwargs['drop_path_rate'] = drop_path
-        self.trunk = timm.create_model(model_name, pretrained=pretrained, **timm_kwargs)
-        feat_size = self.trunk.default_cfg.get('pool_size', None)
-        feature_ndim = 1 if not feat_size else 2
-        if pool in ('abs_attn', 'rot_attn'):
-            assert feature_ndim == 2
-            # if attn pooling used, remove both classifier and default pool
-            self.trunk.reset_classifier(0, global_pool='')
+        if patch_drop is not None:
+            timm_kwargs['patch_drop_rate'] = patch_drop
+
+        custom_pool = pool in ('abs_attn', 'rot_attn')
+        if proj:
+            assert proj in ("linear", "mlp", "none")
+        extra_proj = proj in ("linear", "mlp")
+        if not extra_proj and not custom_pool:
+            # use network classifier head as projection if no proj specified and no custom pooling used
+            # if projection is explicitly set to "none" will be pass through from network trunk
+            proj_dim = 0 if proj == 'none' else embed_dim
+            self.trunk = timm.create_model(
+                model_name,
+                num_classes=proj_dim,
+                global_pool=pool,
+                pretrained=pretrained,
+                **timm_kwargs,
+            )
+            prev_chs = embed_dim
         else:
-            # reset global pool if pool config set, otherwise leave as network default
-            reset_kwargs = dict(global_pool=pool) if pool else {}
-            self.trunk.reset_classifier(0, **reset_kwargs)
-        prev_chs = self.trunk.num_features
+            self.trunk = timm.create_model(
+                model_name,
+                pretrained=pretrained,
+                **timm_kwargs,
+            )
+            feat_size = self.trunk.default_cfg.get('pool_size', None)
+            feature_ndim = 1 if not feat_size else 2
+            if custom_pool:
+                assert feature_ndim == 2
+                # if attn pooling used, remove both classifier and default pool
+                self.trunk.reset_classifier(0, global_pool='')
+            else:
+                # reset global pool if pool config set, otherwise leave as network default
+                reset_kwargs = dict(global_pool=pool) if pool else {}
+                self.trunk.reset_classifier(0, **reset_kwargs)
+            prev_chs = self.trunk.num_features
 
         head_layers = OrderedDict()
+
+        # Add custom pooling to head
         if pool == 'abs_attn':
             head_layers['pool'] = AbsAttentionPool2d(prev_chs, feat_size=feat_size, out_features=embed_dim)
             prev_chs = embed_dim
         elif pool == 'rot_attn':
             head_layers['pool'] = RotAttentionPool2d(prev_chs, out_features=embed_dim)
             prev_chs = embed_dim
-        else:
-            assert proj, 'projection layer needed if non-attention pooling is used.'
 
         # NOTE attention pool ends with a projection layer, so proj should usually be set to '' if such pooling is used
         if proj == 'linear':
@@ -81,6 +108,11 @@ class TimmModel(nn.Module):
             head_layers['mlp'] = Mlp(prev_chs, 2 * embed_dim, embed_dim, drop=(drop, 0), bias=(True, proj_bias))
 
         self.head = nn.Sequential(head_layers)
+        self.is_continual = is_continual
+        if is_continual:
+            self.continual_proj = nn.Sequential(head_layers)
+        else:
+            self.continual_proj = None
 
     def lock(self, unlocked_groups=0, freeze_bn_stats=False):
         """ lock modules
@@ -123,5 +155,9 @@ class TimmModel(nn.Module):
 
     def forward(self, x):
         x = self.trunk(x)
+        if self.continual_proj is not None:
+            continual_x = self.continual_proj(x)
+        else:
+            continual_x = None
         x = self.head(x)
-        return x
+        return x, continual_x

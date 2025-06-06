@@ -48,6 +48,12 @@ def parse_args(args):
         help="Path to file(s) with validation data",
     )
     parser.add_argument(
+        "--continual-data",
+        type=str,
+        default=None,
+        help="Path to file(s) with continual data. When using webdataset, multiple datasources can be combined using the `::` separator.",
+    )
+    parser.add_argument(
         "--train-num-samples",
         type=int,
         default=None,
@@ -124,6 +130,9 @@ def parse_args(args):
     )
     parser.add_argument(
         "--batch-size", type=int, default=4096, help="Batch size per GPU."
+    )
+    parser.add_argument(
+        "--continual-batch-size", type=int, default=512, help="Batch size per GPU."
     )
     parser.add_argument(
         "--epochs", type=int, default=100, help="Number of epochs to train for."
@@ -424,11 +433,28 @@ def parse_args(args):
         default=None,
         help='Which pre-trained weights to distill from, if any.'
     )
-
+    parser.add_argument(
+        "--siglip",
+        default=False,
+        action="store_true",
+        help='Use SigLip (sigmoid) loss.'
+    )
+    parser.add_argument(
+        "--loss-dist-impl",
+        default=None,
+        type=str,
+        help='A string to specify a specific distributed loss implementation.'
+    )
     parser.add_argument(
         "--text_type",
         type=str,
         default='taxon',
+        help="Text type of annotation for text encoder.",
+    )
+    parser.add_argument(
+        "--continual_text_type",
+        type=str,
+        default='text',
         help="Text type of annotation for text encoder.",
     )
     args = parser.parse_args(args)
