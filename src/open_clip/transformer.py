@@ -455,6 +455,7 @@ class VisionTransformer(nn.Module):
             act_layer: Callable = nn.GELU,
             norm_layer: Callable = LayerNorm,
             output_tokens: bool = False,
+            is_continual: bool = False,
     ):
         super().__init__()
         assert pool_type in ('tok', 'avg', 'none')
@@ -536,6 +537,12 @@ class VisionTransformer(nn.Module):
         self.ln_post = norm_layer(pool_dim)
         self.proj = nn.Parameter(scale * torch.randn(pool_dim, output_dim))
 
+        self.is_continual = is_continual
+        if is_continual:
+            self.continual_proj = nn.Parameter(scale * torch.randn(pool_dim, output_dim))
+        else:
+            self.continual_proj = None
+
         self.init_parameters()
 
     def lock(self, unlocked_groups=0, freeze_bn_stats=False):
@@ -595,6 +602,12 @@ class VisionTransformer(nn.Module):
     def set_grad_checkpointing(self, enable=True):
         self.transformer.grad_checkpointing = enable
 
+    @torch.jit.ignore
+    def no_weight_decay(self):
+        # for timm optimizers, 1d params like logit_scale, logit_bias, ln/bn scale, biases are excluded by default
+        no_wd = {'positional_embedding', 'class_embedding'}
+        return no_wd
+
     def _global_pool(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         if self.pool_type == 'avg':
             pooled, tokens = x[:, 1:].mean(dim=1), x[:, 1:]
@@ -640,14 +653,19 @@ class VisionTransformer(nn.Module):
         else:
             x = self.ln_post(x)
             pooled, tokens = self._global_pool(x)
+        
+        if self.is_continual:
+            continual_pooled = pooled @ self.continual_proj
+        else:
+            continual_pooled = None
 
         if self.proj is not None:
             pooled = pooled @ self.proj
 
         if self.output_tokens:
-            return pooled, tokens
-        
-        return pooled
+            return pooled, continual_pooled, tokens
+
+        return pooled, continual_pooled
 
 
 def text_global_pool(x, text: Optional[torch.Tensor] = None, pool_type: str = 'argmax'):
@@ -758,6 +776,14 @@ class TextTransformer(nn.Module):
     @torch.jit.ignore
     def set_grad_checkpointing(self, enable=True):
         self.transformer.grad_checkpointing = enable
+
+    @torch.jit.ignore
+    def no_weight_decay(self):
+        # for timm optimizers, 1d params like logit_scale, logit_bias, ln/bn scale, biases are excluded by default
+        no_wd = {'positional_embedding'}
+        if self.cls_emb is not None:
+            no_wd.add('cls_emb')
+        return no_wd
 
     def build_causal_mask(self):
         # lazily create causal attention mask, with full attention between the tokens

@@ -81,13 +81,12 @@ def run(model, dataloader, args):
             if cast_dtype is not None:
                 images = images.to(dtype=cast_dtype)
             target = target.to(args.device)
-            
 
             with autocast():
-                image_features = model.encode_image(images) #batch_size x emb_size
+                image_features, _ = model.encode_image(images) #batch_size x emb_size
                 image_features = F.normalize(image_features, dim=-1)
                 feature_list.append(image_features.detach().cpu().numpy())
-                
+
         file = save_pickle(log_base_path,[np.vstack(feature_list), np.hstack(target_list), dataloader.dataset.samples,dataloader.dataset.class_to_idx])
 
     return file
@@ -247,6 +246,7 @@ if __name__ == "__main__":
             image_std=args.image_std,
             aug_cfg=args.aug_cfg,
             output_dict=True,
+            load_weights_only=False,
         )
 
         if args.trace:

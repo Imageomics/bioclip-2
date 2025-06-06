@@ -95,6 +95,9 @@ def expand_urls(urls, weights=None):
 
 def get_dataset_size(shards):
     shards_list, _ = expand_urls(shards)
+    for shard_file in shards_list:
+        if not os.path.exists(shard_file):
+            shards_list.remove(shard_file)
     dir_path = os.path.dirname(shards_list[0])
     sizes_filename = os.path.join(dir_path, 'sizes.json')
     len_filename = os.path.join(dir_path, '__len__')
@@ -104,7 +107,7 @@ def get_dataset_size(shards):
         # But this is not always the case.
         if "per_shard" in sizes:
             sizes = sizes["per_shard"]
-        total_size = sum([int(sizes[os.path.basename(shard)]) for shard in shards_list])
+        total_size = sum([int(sizes[os.path.basename(shard)]) for shard in shards_list if os.path.basename(shard) in sizes])
     elif os.path.exists(len_filename):
         # FIXME this used to be eval(open(...)) but that seemed rather unsafe
         total_size = ast.literal_eval(open(len_filename, 'r').read())
@@ -328,8 +331,13 @@ class ResampledShards2(IterableDataset):
                 yield dict(url=self.rng.choices(self.urls, weights=self.weights, k=1)[0])
 
 
-def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokenizer=None):
-    input_shards = args.train_data if is_train else args.val_data
+def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokenizer=None, is_continual=False):
+    if is_continual:
+        input_shards = args.continual_data
+    elif is_train:
+        input_shards = args.train_data
+    else:
+        input_shards = args.val_data
     assert input_shards is not None
     resampled = getattr(args, 'dataset_resampled', False) and is_train
 
@@ -382,24 +390,34 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
             # at this point, we have an iterator over the shards assigned to each worker
             wds.tarfile_to_samples(handler=log_and_continue),
         ])
-    if args.text_type == 'random':
-
+    text_type = args.continual_text_type if is_continual else args.text_type
+    batch_size = args.continual_batch_size if is_continual else args.batch_size
+    if text_type == 'random':
         pipeline.extend([
             wds.select(filter_no_caption_or_no_image),
             wds.decode("pilrgb", handler=log_and_continue),
             wds.rename(image="jpg;png;jpeg;webp",sci="sci.txt", com="com.txt",taxon="taxon.txt", sci_com="sci_com.txt", taxon_com = "taxon_com.txt"),
             wds.map_dict(image=preprocess_img, sci=lambda sci: tokenizer(sci)[0], com=lambda com: tokenizer(com)[0], taxon=lambda taxon: tokenizer(taxon)[0], sci_com=lambda sci_com: tokenizer(sci_com)[0], taxon_com=lambda taxon_com: tokenizer(taxon_com)[0]),
             wds.to_tuple("image", "sci", "com", "taxon", "sci_com", "taxon_com"),
-            wds.batched(args.batch_size, partial=not is_train)
+            wds.batched(batch_size, partial=not is_train)
+        ])
+    elif text_type == '':
+        pipeline.extend([
+            wds.select(filter_no_caption_or_no_image),
+            wds.decode("pilrgb", handler=log_and_continue),
+            wds.rename(image="jpg;png;jpeg;webp", text='txt'),
+            wds.map_dict(image=preprocess_img, text=lambda text: tokenizer(text)[0]),
+            wds.to_tuple("image", "text"),
+            wds.batched(batch_size, partial=not is_train)
         ])
     else:
         pipeline.extend([
             wds.select(filter_no_caption_or_no_image),
             wds.decode("pilrgb", handler=log_and_continue),
-            wds.rename(image="jpg;png;jpeg;webp", text=args.text_type+'.txt'),
+            wds.rename(image="jpg;png;jpeg;webp", text=text_type+'.txt'),
             wds.map_dict(image=preprocess_img, text=lambda text: tokenizer(text)[0]),
             wds.to_tuple("image", "text"),
-            wds.batched(args.batch_size, partial=not is_train)
+            wds.batched(batch_size, partial=not is_train)
         ])
 
 
@@ -410,7 +428,7 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
             assert num_shards >= args.workers * args.world_size, 'number of shards must be >= total workers'
         # roll over and repeat a few samples to get same number of full batches on each node
         round_fn = math.floor if floor else math.ceil
-        global_batch_size = args.batch_size * args.world_size
+        global_batch_size = batch_size * args.world_size
         num_batches = round_fn(num_samples / global_batch_size)
         num_workers = max(1, args.workers)
         num_worker_batches = round_fn(num_batches / num_workers)  # per dataloader worker
@@ -419,7 +437,7 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
         dataset = dataset.with_epoch(num_worker_batches)  # each worker is iterating over this
     else:
         # last batches are partial, eval is done on single (master) node
-        num_batches = math.ceil(num_samples / args.batch_size)
+        num_batches = math.ceil(num_samples / batch_size)
 
     dataloader = wds.WebLoader(
         dataset,
@@ -554,6 +572,10 @@ def get_data(args, preprocess_fns, epoch=0, tokenizer=None):
     if args.val_data:
         data["val"] = get_dataset_fn(args.val_data, args.dataset_type)(
             args, preprocess_val, is_train=False, tokenizer=tokenizer)
+
+    if args.continual_data:
+        data["continual"] = get_dataset_fn(args.continual_data, args.dataset_type)(
+            args, preprocess_train, is_train=True, epoch=epoch, tokenizer=tokenizer, is_continual=True)
 
     if args.imagenet_val is not None:
         data["imagenet-val"] = get_imagenet(args, preprocess_fns, "val")

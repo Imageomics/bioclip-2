@@ -209,16 +209,23 @@ def main(args):
 
     dist_model = None
     args.distill = args.distill_model is not None and args.distill_pretrained is not None
-    if args.distill:
+    if args.distill or args.continual_data is not None:
         #FIXME: support distillation with grad accum.
         assert args.accum_freq == 1
         #FIXME: support distillation with coca.
         assert 'coca' not in args.model.lower()
+    
+    is_continual = True if args.continual_data else False
 
     if isinstance(args.force_image_size, (tuple, list)) and len(args.force_image_size) == 1:
         # arg is nargs, single (square) image size list -> int
         args.force_image_size = args.force_image_size[0]
     random_seed(args.seed, 0)
+    model_kwargs = {}
+    if args.siglip:
+        model_kwargs['init_logit_scale'] = np.log(10)  # different from CLIP
+        model_kwargs['init_logit_bias'] = -10
+    load_weights_only = False if args.eval_imagenet else True
     model, preprocess_train, preprocess_val = create_model_and_transforms(
         args.model,
         args.pretrained,
@@ -234,6 +241,9 @@ def main(args):
         image_std=args.image_std,
         aug_cfg=args.aug_cfg,
         output_dict=True,
+        is_continual=is_continual,
+        load_weights_only=load_weights_only,
+        **model_kwargs
     )
     if args.distill:
         # FIXME: currenlty assumes the model your distilling from has the same tokenizer & transforms.
@@ -243,6 +253,8 @@ def main(args):
             device=device,
             precision=args.precision,
             output_dict=True,
+            image_mean=args.image_mean,
+            image_std=args.image_std,
         )
 
     random_seed(args.seed, args.rank)
@@ -293,22 +305,42 @@ def main(args):
     if args.train_data or args.dataset_type == "synthetic":
         assert not args.trace, 'Cannot train with traced model'
 
-        exclude = lambda n, p: p.ndim < 2 or "bn" in n or "ln" in n or "bias" in n or 'logit_scale' in n
-        include = lambda n, p: not exclude(n, p)
+        opt = getattr(args, 'opt', 'adamw').lower()
+        if opt.startswith('timm/'):
+            from timm.optim import create_optimizer_v2
+            timm_opt = opt.split('timm/')[-1]
+            opt_kwargs = {}
+            assert (args.beta1 is None) == (args.beta2 is None), \
+                'When using timm optimizer, BOTH beta1 and beta2 must be specified (or not specified).'
+            if args.beta1 is not None:
+                opt_kwargs['betas'] = (args.beta1, args.beta2)
+            if args.momentum is not None:
+                opt_kwargs['momentum'] = args.momentum
+            optimizer = create_optimizer_v2(
+                model,
+                timm_opt,
+                lr=args.lr,
+                weight_decay=args.wd,
+                eps=args.eps,
+                **opt_kwargs,
+            )
+        else:
+            exclude = lambda n, p: p.ndim < 2 or "bn" in n or "ln" in n or "bias" in n or 'logit_scale' in n
+            include = lambda n, p: not exclude(n, p)
 
-        named_parameters = list(model.named_parameters())
-        gain_or_bias_params = [p for n, p in named_parameters if exclude(n, p) and p.requires_grad]
-        rest_params = [p for n, p in named_parameters if include(n, p) and p.requires_grad]
+            named_parameters = list(model.named_parameters())
+            gain_or_bias_params = [p for n, p in named_parameters if exclude(n, p) and p.requires_grad]
+            rest_params = [p for n, p in named_parameters if include(n, p) and p.requires_grad]
 
-        optimizer = optim.AdamW(
-            [
-                {"params": gain_or_bias_params, "weight_decay": 0.},
-                {"params": rest_params, "weight_decay": args.wd},
-            ],
-            lr=args.lr,
-            betas=(args.beta1, args.beta2),
-            eps=args.eps,
-        )
+            optimizer = optim.AdamW(
+                [
+                    {"params": gain_or_bias_params, "weight_decay": 0.},
+                    {"params": rest_params, "weight_decay": args.wd},
+                ],
+                lr=args.lr,
+                betas=(args.beta1, args.beta2),
+                eps=args.eps,
+            )
         if args.horovod:
             optimizer = hvd.DistributedOptimizer(optimizer, named_parameters=model.named_parameters())
             hvd.broadcast_parameters(model.state_dict(), root_rank=0)

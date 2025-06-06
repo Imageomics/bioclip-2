@@ -157,6 +157,16 @@ def parse_args(args):
         action="store_true",
         help="Don't set device index from local rank (when CUDA_VISIBLE_DEVICES restricted to one per proc).",
     )
+    parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate.")
+    parser.add_argument(
+        "--epochs", type=int, default=100, help="Number of epochs to train for."
+    )
+    parser.add_argument(
+        "--n_repeats", type=int, default=5, help="Repeat times for simpleshot."
+    )
+    parser.add_argument(
+        "--eval_every", type=int, default=10, help="Log step."
+    )
     parser.add_argument(
         "--seed", 
         type=int, 

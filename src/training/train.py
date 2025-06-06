@@ -21,6 +21,29 @@ from .zero_shot import zero_shot_eval
 from .precision import get_autocast
 
 
+class IterLoader:
+    def __init__(self, loader, length=None):
+        self.loader = loader
+        self.length = length
+        self.iter = None
+
+    def __len__(self):
+        if self.length is not None:
+            return self.length
+        else:
+            return len(self.loader)
+
+    def new_epoch(self):
+        self.iter = iter(self.loader)
+
+    def next(self):
+        try:
+            return next(self.iter)
+        except:
+            self.iter = iter(self.loader)
+            return next(self.iter)
+
+
 class AverageMeter(object):
     """Computes and stores the average and current value"""
 
@@ -75,6 +98,10 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
     num_batches_per_epoch = dataloader.num_batches // args.accum_freq
     sample_digits = math.ceil(math.log(dataloader.num_samples + 1, 10))
 
+    if 'continual' in data:
+        continual_loader = IterLoader(data['continual'].dataloader)
+        continual_loader.new_epoch()
+
     if args.accum_freq > 1:
         accum_images, accum_texts, accum_features = [], [], {}
 
@@ -96,6 +123,13 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
             texts = random.choice([sci, com, taxon, sci_com, taxon_com])
         else:
             images, texts = batch
+
+        if "continual" in data:
+            continual_batch = continual_loader.next()
+            continual_images, continual_texts = continual_batch
+            images = torch.cat((images, continual_images), dim=0)
+            texts = torch.cat((texts, continual_texts), dim=0)
+
         images = images.to(device=device, dtype=cast_dtype, non_blocking=True)
         texts = texts.to(device=device, non_blocking=True)
 
@@ -110,6 +144,8 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
                     with torch.no_grad():
                         dist_model_out = dist_model(images, texts)
                     model_out.update({f'dist_{k}' : v for k, v in dist_model_out.items()})
+                if "continual" in data:
+                    model_out["continual_len"] = len(continual_images)
                 losses = loss(**model_out, output_dict=True)
 
                 total_loss = sum(losses.values())
@@ -259,6 +295,7 @@ def evaluate(model, data, epoch, args, tb_writer=None):
         samples_per_val = dataloader.num_samples
 
         cumulative_loss = 0.0
+        cumulative_acc = 0.0
         cumulative_gen_loss = 0.0
         with torch.no_grad():
             for i, batch in enumerate(dataloader):
@@ -286,15 +323,18 @@ def evaluate(model, data, epoch, args, tb_writer=None):
                         F.cross_entropy(logits_per_image, labels) +
                         F.cross_entropy(logits_per_text, labels)
                     ) / 2
+                    total_acc = (torch.max(logits_per_image, dim=1)[0] == logits_per_image.diag()).sum() / len(logits_per_image)
 
                     gen_loss = maybe_compute_generative_loss(model_out)
 
                 cumulative_loss += total_loss * batch_size
+                cumulative_acc += total_acc * batch_size
                 num_samples += batch_size
                 if is_master(args) and (i % 100) == 0:
                     logging.info(
                         f"Eval Epoch: {epoch} [{num_samples} / {samples_per_val}]\t"
-                        f"Clip Loss: {cumulative_loss / num_samples:.6f}\t")
+                        f"Clip Loss: {cumulative_loss / num_samples:.6f}\t"
+                        f"Acc: {cumulative_acc / num_samples:.6f}\t")
 
                     if gen_loss is not None:
                         cumulative_gen_loss += gen_loss * batch_size
@@ -303,8 +343,10 @@ def evaluate(model, data, epoch, args, tb_writer=None):
 
 
             loss = cumulative_loss / num_samples
+            acc = cumulative_acc / num_samples
             metrics.update({
                 "clip_val_loss": loss.item(), 
+                "acc": acc.item(),
                 "epoch": epoch, 
                 "num_samples": num_samples
             })

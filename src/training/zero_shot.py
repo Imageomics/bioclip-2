@@ -47,9 +47,9 @@ def run(model, classifier, dataloader, args):
             with autocast():
                 # predict
                 if args.distributed and not args.horovod:
-                    image_features = model.module.encode_image(images)
+                    image_features, _ = model.module.encode_image(images)
                 else:
-                    image_features = model.encode_image(images)
+                    image_features, _ = model.encode_image(images)
                 image_features = F.normalize(image_features, dim=-1)
                 logits = 100. * image_features @ classifier
 

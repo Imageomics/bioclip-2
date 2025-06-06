@@ -1,5 +1,5 @@
 """
-Sourced from [biobench](https://github.com/samuelstevens/biobench/blob/main/biobench/newt/__init__.py).
+Modified from [biobench](https://github.com/samuelstevens/biobench/blob/main/biobench/newt/__init__.py).
 ---
 # NeWT: Natural World Tasks
 NeWT is a collection of 164 binary classification tasks related to visual understanding of the natural world ([CVPR 2021 paper](https://arxiv.org/abs/2103.16483), [code](https://github.com/visipedia/newt/tree/main)).

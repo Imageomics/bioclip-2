@@ -106,7 +106,8 @@ def _build_vision_tower(
         embed_dim: int,
         vision_cfg: CLIPVisionCfg,
         quick_gelu: bool = False,
-        cast_dtype: Optional[torch.dtype] = None
+        cast_dtype: Optional[torch.dtype] = None,
+        is_continual: bool = False
 ):
     if isinstance(vision_cfg, dict):
         vision_cfg = CLIPVisionCfg(**vision_cfg)
@@ -166,6 +167,7 @@ def _build_vision_tower(
             output_dim=embed_dim,
             act_layer=act_layer,
             norm_layer=norm_layer,
+            is_continual=is_continual,
         )
 
     return visual
@@ -230,13 +232,15 @@ class CLIP(nn.Module):
             quick_gelu: bool = False,
             init_logit_scale: float = np.log(1 / 0.07),
             init_logit_bias: Optional[float] = None,
+            nonscalar_logit_scale: bool = False,
             cast_dtype: Optional[torch.dtype] = None,
             output_dict: bool = False,
+            is_continual: bool = False
     ):
         super().__init__()
         self.output_dict = output_dict
 
-        self.visual = _build_vision_tower(embed_dim, vision_cfg, quick_gelu, cast_dtype)
+        self.visual = _build_vision_tower(embed_dim, vision_cfg, quick_gelu, cast_dtype, is_continual)
 
         text = _build_text_tower(embed_dim, text_cfg, quick_gelu, cast_dtype)
         self.transformer = text.transformer
@@ -249,9 +253,10 @@ class CLIP(nn.Module):
         self.text_pool_type = text.pool_type
         self.register_buffer('attn_mask', text.attn_mask, persistent=False)
 
-        self.logit_scale = nn.Parameter(torch.ones([]) * init_logit_scale)
+        lshape = [1] if nonscalar_logit_scale else []
+        self.logit_scale = nn.Parameter(torch.ones(lshape) * init_logit_scale)
         if init_logit_bias is not None:
-            self.logit_bias = nn.Parameter(torch.ones([]) * init_logit_bias)
+            self.logit_bias = nn.Parameter(torch.ones(lshape) * init_logit_bias)
         else:
             self.logit_bias = None
 
@@ -264,9 +269,22 @@ class CLIP(nn.Module):
         self.visual.set_grad_checkpointing(enable)
         self.transformer.grad_checkpointing = enable
 
+    @torch.jit.ignore
+    def no_weight_decay(self):
+        # for timm optimizers, 1d params like logit_scale, logit_bias, ln/bn scale, biases are excluded by default
+        no_wd = {'positional_embedding'}
+        if hasattr(self.visual, 'no_weight_decay'):
+            for n in self.visual.no_weight_decay():
+                no_wd.add('visual.' + n)
+        return no_wd
+
     def encode_image(self, image, normalize: bool = False):
-        features = self.visual(image)
-        return F.normalize(features, dim=-1) if normalize else features
+        features, continual_features = self.visual(image)
+        if normalize:
+            features = F.normalize(features, dim=-1)
+            if continual_features is not None:
+                continual_features = F.normalize(continual_features, dim=-1)
+        return features, continual_features
 
     def encode_text(self, text, normalize: bool = False):
         cast_dtype = self.transformer.get_cast_dtype()
@@ -286,7 +304,7 @@ class CLIP(nn.Module):
         return F.normalize(x, dim=-1) if normalize else x
 
     def get_logits(self, image, text):
-        image_features = self.encode_image(image, normalize=True)
+        image_features, _ = self.encode_image(image, normalize=True)
         text_features = self.encode_text(text, normalize=True)
         image_logits = self.logit_scale.exp() * image_features @ text_features.T
         if self.logit_bias is not None:
@@ -299,7 +317,7 @@ class CLIP(nn.Module):
             image: Optional[torch.Tensor] = None,
             text: Optional[torch.Tensor] = None,
     ):
-        image_features = self.encode_image(image, normalize=True) if image is not None else None
+        image_features, continual_features = self.encode_image(image, normalize=True) if image is not None else (None, None)
         text_features = self.encode_text(text, normalize=True) if text is not None else None
 
         if self.output_dict:
@@ -308,13 +326,15 @@ class CLIP(nn.Module):
                 "text_features": text_features,
                 "logit_scale": self.logit_scale.exp()
             }
+            if continual_features is not None:
+                out_dict['continual_features'] = continual_features
             if self.logit_bias is not None:
                 out_dict['logit_bias'] = self.logit_bias
             return out_dict
 
         if self.logit_bias is not None:
-            return image_features, text_features, self.logit_scale.exp(), self.logit_bias
-        return image_features, text_features, self.logit_scale.exp()
+            return image_features, continual_features, text_features, self.logit_scale.exp(), self.logit_bias
+        return image_features, continual_features, text_features, self.logit_scale.exp()
 
 
 class CustomTextCLIP(nn.Module):
@@ -328,6 +348,7 @@ class CustomTextCLIP(nn.Module):
             quick_gelu: bool = False,
             init_logit_scale: float = np.log(1 / 0.07),
             init_logit_bias: Optional[float] = None,
+            nonscalar_logit_scale: bool = False,
             cast_dtype: Optional[torch.dtype] = None,
             output_dict: bool = False,
     ):
@@ -337,9 +358,11 @@ class CustomTextCLIP(nn.Module):
         self.text = _build_text_tower(embed_dim, text_cfg, quick_gelu, cast_dtype)
         self.context_length = self.text.context_length
         self.vocab_size = self.text.vocab_size
-        self.logit_scale = nn.Parameter(torch.ones([]) * init_logit_scale)
+
+        lshape = [1] if nonscalar_logit_scale else []
+        self.logit_scale = nn.Parameter(torch.ones(lshape) * init_logit_scale)
         if init_logit_bias is not None:
-            self.logit_bias = nn.Parameter(torch.ones([]) * init_logit_bias)
+            self.logit_bias = nn.Parameter(torch.ones(lshape) * init_logit_bias)
         else:
             self.logit_bias = None
 
@@ -355,16 +378,32 @@ class CustomTextCLIP(nn.Module):
         self.visual.set_grad_checkpointing(enable)
         self.text.set_grad_checkpointing(enable)
 
+    @torch.jit.ignore
+    def no_weight_decay(self):
+        # for timm optimizers, 1d params like logit_scale, logit_bias, ln/bn scale, biases are excluded by default
+        no_wd = set()
+        if hasattr(self.visual, 'no_weight_decay'):
+            for n in self.visual.no_weight_decay():
+                no_wd.add('visual.' + n)
+        if hasattr(self.text, 'no_weight_decay'):
+            for n in self.visual.no_weight_decay():
+                no_wd.add('text.' + n)
+        return no_wd
+
     def encode_image(self, image, normalize: bool = False):
-        features = self.visual(image)
-        return F.normalize(features, dim=-1) if normalize else features
+        features, continual_features = self.visual(image)
+        if normalize:
+            features = F.normalize(features, dim=-1)
+            if continual_features is not None:
+                continual_features = F.normalize(continual_features, dim=-1)
+        return features, continual_features
 
     def encode_text(self, text, normalize: bool = False):
         features = self.text(text)
         return F.normalize(features, dim=-1) if normalize else features
 
     def get_logits(self, image, text):
-        image_features = self.encode_image(image, normalize=True)
+        image_features, _ = self.encode_image(image, normalize=True)
         text_features = self.encode_text(text, normalize=True)
         image_logits = self.logit_scale.exp() * image_features @ text_features.T
         if self.logit_bias is not None:
@@ -377,7 +416,7 @@ class CustomTextCLIP(nn.Module):
             image: Optional[torch.Tensor] = None,
             text: Optional[torch.Tensor] = None,
     ):
-        image_features = self.encode_image(image, normalize=True) if image is not None else None
+        image_features, continual_features = self.encode_image(image, normalize=True) if image is not None else (None, None)
         text_features = self.encode_text(text, normalize=True) if text is not None else None
 
         if self.output_dict:
@@ -386,13 +425,15 @@ class CustomTextCLIP(nn.Module):
                 "text_features": text_features,
                 "logit_scale": self.logit_scale.exp()
             }
+            if continual_features is not None:
+                out_dict['continual_features'] = continual_features
             if self.logit_bias is not None:
                 out_dict['logit_bias'] = self.logit_bias
             return out_dict
 
         if self.logit_bias is not None:
-            return image_features, text_features, self.logit_scale.exp(), self.logit_bias
-        return image_features, text_features, self.logit_scale.exp()
+            return image_features, continual_features, text_features, self.logit_scale.exp(), self.logit_bias
+        return image_features, continual_features, text_features, self.logit_scale.exp()
 
 
 def convert_weights_to_lp(model: nn.Module, dtype=torch.float16):
@@ -418,9 +459,10 @@ def convert_weights_to_lp(model: nn.Module, dtype=torch.float16):
 
         if isinstance(l, VisionTransformer):
             # convert vision nn.Parameter projections
-            attr = getattr(l, "proj", None)
-            if attr is not None:
-                attr.data = attr.data.to(dtype)
+            for attr in ["proj", "continual_proj"]:
+                tensor = getattr(l, attr, None)
+                if tensor is not None:
+                    tensor.data = tensor.data.to(dtype)
 
     model.apply(_convert_weights)
 

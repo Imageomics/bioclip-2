@@ -1,5 +1,5 @@
 """
-Sourced from [generalized-category-discovery](https://github.com/sgvaze/generalized-category-discovery/blob/main/data/herbarium_19.py).
+Modified from [generalized-category-discovery](https://github.com/sgvaze/generalized-category-discovery/blob/main/data/herbarium_19.py).
 [Generalized Category Discovery](https://www.robots.ox.ac.uk/~vgg/research/gcd/)
 Given a dataset, some of which is labelled, *Generalized Category Discovery* is the task of assigning a category to all the unlabelled instances. Unlabelled instances could come from labelled or 'New' classes.
 Requested ciation:
@@ -11,16 +11,31 @@ Requested ciation:
                year={2022}}
 ```
 """
+
+import sys
+import datetime
+import logging
 import os.path
 
 import torch.utils
 import torch.utils.data
 
 import numpy as np
+import pickle
 import torch
 import torchvision.datasets
 from copy import deepcopy
+from tqdm import tqdm
+from .faster_mix_k_means_pytorch import K_Means as SemiSupKMeans
 from scipy.optimize import linear_sum_assignment as linear_assignment
+
+from .params import parse_args
+from .utils import init_device, random_seed
+from ..open_clip import (
+    create_model_and_transforms,
+    trace_model,
+)
+from ..training.logger import setup_logging
 
 
 def cluster_acc(y_true, y_pred):
@@ -128,6 +143,7 @@ def get_herbarium_datasets(herbarium_dataroot, train_transform, test_transform, 
                                        root=os.path.join(herbarium_dataroot, 'small-train'))
 
     # Get labelled training set which has subsampled classes, then subsample some indices from that
+    # TODO: Subsampling unlabelled set in uniform random fashion from training data, will contain many instances of dominant class
     train_dataset_labelled = subsample_classes(deepcopy(train_dataset), include_classes=train_classes)
     subsample_indices = subsample_instances(train_dataset_labelled, prop_indices_to_subsample=prop_train_labels)
     train_dataset_labelled = subsample_dataset(train_dataset_labelled, subsample_indices)
@@ -196,3 +212,202 @@ class MergedDataset(torch.utils.data.Dataset):
 
     def __len__(self):
         return len(self.unlabelled_dataset) + len(self.labelled_dataset)
+
+
+@torch.no_grad
+def get_features(
+    args, backbone, *, dataset, num_train_classes
+):
+    """
+    Get a block of features from a vision backbone for a split (either train or test).
+
+    Args:
+        args: Herbarium19 arguments.
+        backbone: visual backbone.
+        is_train: whether you want training data or the test data.
+    """
+    backbone = backbone.to(args.device)
+
+    dataloader = torch.utils.data.DataLoader(
+        dataset=dataset,
+        batch_size=args.batch_size,
+        num_workers=args.workers,
+        drop_last=False,
+        shuffle=False,
+    )
+
+    all_features, all_labels, all_ids, all_masks, all_masks_cls = [], [], [], [], []
+
+    total = len(dataloader) if not args.debug else 2
+    it = iter(dataloader)
+    logging.debug("Need to embed %d batches of %d images.", total, args.batch_size)
+    for b in tqdm(range(total)):
+        images, labels, ids, masks = next(it)
+        images = images.to(args.device)
+
+        with torch.no_grad():
+            features, _ = backbone.encode_image(images)
+
+        all_features.append(features)
+        all_labels.extend(labels)
+        all_ids.extend(ids)
+        all_masks.extend(masks)
+        masks_cls = np.array([True if x.item() in range(num_train_classes) else False for x in labels])
+        all_masks_cls.extend(masks_cls)
+
+    all_features = torch.cat(all_features, dim=0)
+    all_ids = np.array(all_ids)
+    all_labels = torch.tensor(all_labels)
+    all_masks = torch.tensor(all_masks)
+    all_masks_cls = torch.tensor(all_masks_cls)
+    logging.info("Got features for %d images.", len(all_ids))
+
+    return all_features, all_labels, all_ids, all_masks, all_masks_cls
+
+
+if __name__ == "__main__":
+    # 1. Load model
+    args = parse_args(sys.argv[1:])
+
+    if torch.cuda.is_available():
+        # This enables tf32 on Ampere GPUs which is only 8% slower than
+        # float16 and almost as accurate as float32
+        # This was a default in pytorch until 1.12
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.benchmark = True
+        torch.backends.cudnn.deterministic = False
+
+    device = init_device(args)
+
+    args.save_logs = args.logs and args.logs.lower() != "none"
+
+    # get the name of the experiments
+    if args.save_logs and args.name is None:
+        # sanitize model name for filesystem/uri use
+        model_name_safe = args.model.replace("/", "-")
+        date_str = datetime.datetime.now().strftime("%Y_%m_%d-%H_%M_%S")
+        args.name = "-".join(
+            [
+                date_str,
+                f"model_{model_name_safe}",
+                f"b_{args.batch_size}",
+                f"j_{args.workers}",
+                f"p_{args.precision}",
+                "zero_shot_iid",
+            ]
+        )
+    if args.save_logs is None:
+        args.log_path = None
+    else:
+        log_base_path = os.path.join(args.logs, args.name)
+        args.log_path = None
+        os.makedirs(log_base_path, exist_ok=True)
+        log_filename = "out.log"
+        args.log_path = os.path.join(log_base_path, log_filename)
+
+    # Setup text logger
+    args.log_level = logging.DEBUG if args.debug else logging.INFO
+    setup_logging(args.log_path, args.log_level)
+
+    if (
+        isinstance(args.force_image_size, (tuple, list))
+        and len(args.force_image_size) == 1
+    ):
+        # arg is nargs, single (square) image size list -> int
+        args.force_image_size = args.force_image_size[0]
+
+    random_seed(args.seed, 0)
+    model, preprocess_train, preprocess_val = create_model_and_transforms(
+        args.model,
+        args.pretrained,
+        precision=args.precision,
+        device=device,
+        jit=args.torchscript,
+        force_quick_gelu=args.force_quick_gelu,
+        force_custom_text=args.force_custom_text,
+        force_patch_dropout=None,
+        force_image_size=args.force_image_size,
+        pretrained_image=args.pretrained_image,
+        image_mean=args.image_mean,
+        image_std=args.image_std,
+        aug_cfg=args.aug_cfg,
+        output_dict=True,
+        load_weights_only=False,
+    )
+
+    random_seed(args.seed, args.rank)
+
+    if args.trace:
+        model = trace_model(model, batch_size=args.batch_size, device=device)
+
+    logging.info("Model:")
+    logging.info(f"{str(model)}")
+    logging.info("Params:")
+    if  args.save_logs is None:
+        for name in sorted(vars(args)):
+            val = getattr(args, name)
+            logging.info(f"  {name}: {val}")
+    else:
+        params_file = os.path.join(args.logs, args.name, "params.txt")
+        with open(params_file, "w") as f:
+            for name in sorted(vars(args)):
+                val = getattr(args, name)
+                logging.info(f"  {name}: {val}")
+                f.write(f"{name}: {val}\n")
+
+    # Load Datasets.
+    herb_path_splits = './src/evaluation/herbarium_19_class_splits.pkl'
+
+    with open(herb_path_splits, 'rb') as handle:
+        class_splits = pickle.load(handle)
+
+    train_classes = class_splits['Old']
+    unlabeled_classes = class_splits['New']
+
+    all_data = get_herbarium_datasets(args.data_root, preprocess_val, preprocess_val, train_classes)
+    train_dataset = all_data["train_labelled"]
+    train_unlabel_dataset = all_data["train_unlabelled"]
+    kmeans_train_dataset = MergedDataset(train_dataset, train_unlabel_dataset)
+
+    train_loader = torch.utils.data.DataLoader(
+        dataset=train_dataset, batch_size=args.batch_size, shuffle=True,
+        num_workers=args.workers
+    )
+
+    criterion = torch.nn.CrossEntropyLoss()
+
+    # KMeans Test
+    train_features, train_labels, train_ids, train_masks, train_masks_cls = get_features(
+        args, model, dataset=kmeans_train_dataset, num_train_classes=len(train_classes)
+    )
+    train_masks = train_masks.bool()
+    l_features = train_features[train_masks]
+    u_features = train_features[~train_masks]
+    l_labels = train_labels[train_masks]
+    u_labels = train_labels[~train_masks]
+
+    print('Fitting Semi-Supervised K-Means...')
+    K = len(train_classes) + len(unlabeled_classes)
+    kmeans = SemiSupKMeans(k=K, tolerance=1e-4, max_iterations=10, init='k-means++',
+                           n_init=1, random_state=args.seed, n_jobs=None, pairwise_batch_size=1024, mode=None)
+
+    kmeans.fit_mix(u_features, l_features, l_labels)
+
+    all_preds = kmeans.labels_
+
+    # -----------------------
+    # EVALUATE
+    # -----------------------
+    # Get preds corresponding to unlabelled set
+    preds = all_preds[~train_masks]
+
+    # Get portion of mask_cls which corresponds to the unlabelled set
+    mask = train_masks_cls[~train_masks]
+    mask = mask.bool()
+
+    u_labels = u_labels.long().cpu().numpy()
+    accs = np.zeros_like(u_labels)
+    accs[mask] = cluster_acc(u_labels[mask], preds[mask])
+    accs[~mask] = cluster_acc(u_labels[~mask], preds[~mask])
+
+    logging.info("KMeans clustering accuracy: %.2f%%", 100 * accs.mean())

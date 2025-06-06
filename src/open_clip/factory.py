@@ -14,7 +14,7 @@ from .convert import convert_state_dict
 from .model import CLIP, CustomTextCLIP, convert_weights_to_lp, convert_to_custom_text_state_dict,\
     resize_pos_embed, get_cast_dtype, resize_text_pos_embed, set_model_preprocess_cfg
 from .coca_model import CoCa
-from .loss import ClipLoss, DistillClipLoss, CoCaLoss, SigLipLoss
+from .loss import ClipLoss, DistillClipLoss, CoCaLoss, SigLipLoss, ContinualLoss
 from .pretrained import is_pretrained_cfg, get_pretrained_cfg, download_pretrained,\
     list_pretrained_tags_by_model, download_pretrained_from_hf
 from .transform import image_transform_v2, AugmentationCfg, PreprocessCfg, merge_preprocess_dict, merge_preprocess_kwargs
@@ -188,9 +188,22 @@ def load_checkpoint(
     if 'positional_embedding' in state_dict and not hasattr(model, 'positional_embedding'):
         state_dict = convert_to_custom_text_state_dict(state_dict)
 
+    # correct if logit_scale differs in being scaler vs 1d param
+    if 'logit_scale' in state_dict and model.logit_scale.ndim != state_dict['logit_scale'].ndim:
+        state_dict['logit_scale'] = state_dict['logit_scale'].reshape(model.logit_scale.shape)
+
+    # correct if logit_bias differs in being scaler vs 1d param
+    if 'logit_bias' in state_dict and model.logit_bias.ndim != state_dict['logit_bias'].ndim:
+        state_dict['logit_bias'] = state_dict['logit_bias'].reshape(model.logit_bias.shape)
+
     # If loading a non-SigLIP model for SigLIP training. See https://github.com/mlfoundations/open_clip/issues/712
     if 'logit_bias' not in state_dict and model.logit_bias is not None:
         state_dict["logit_bias"] = torch.zeros_like(state_dict["logit_scale"])
+    
+    if 'visual.continual_proj' not in state_dict and model.visual.continual_proj is not None:
+        state_dict["visual.continual_proj"] = state_dict["visual.proj"]
+    if 'visual.continual_proj' in state_dict and model.visual.continual_proj is None:
+        del state_dict["visual.continual_proj"]
 
     # Certain text transformers no longer expect position_ids after transformers==4.31
     position_id_key = 'text.transformer.embeddings.position_ids'
@@ -222,6 +235,7 @@ def create_model(
         output_dict: Optional[bool] = None,
         require_pretrained: bool = False,
         load_weights_only: bool = True,
+        is_continual: bool = False,
         **model_kwargs,
 ):
     """Creates and configures a contrastive vision-language model.
@@ -250,6 +264,7 @@ def create_model(
         output_dict: If True and model supports it, return dictionary of features
         require_pretrained: Raise error if pretrained weights cannot be loaded
         load_weights_only: Only deserialize model weights and unpickling torch checkpoints (for safety)
+        is_continual: If True, create a continual learning model with continual projection
         **model_kwargs: Additional keyword arguments passed to model constructor
 
     Returns:
@@ -282,7 +297,7 @@ def create_model(
         config = _get_hf_config(model_id, cache_dir=cache_dir)
         preprocess_cfg = merge_preprocess_dict(preprocess_cfg, config['preprocess_cfg'])
         model_cfg = config['model_cfg']
-        pretrained_hf = False  # override, no need to load original HF text weights
+        pretrained = False  # override, no need to load original HF text weights
     else:
         model_name = model_name.replace('/', '-')  # for callers using old naming with / in ViT names
         checkpoint_path = None
@@ -333,7 +348,7 @@ def create_model(
         else:
             model = CustomTextCLIP(**model_cfg, cast_dtype=cast_dtype)
     else:
-        model = CLIP(**model_cfg, cast_dtype=cast_dtype)
+        model = CLIP(**model_cfg, cast_dtype=cast_dtype, is_continual=is_continual)
 
     if precision in ("fp16", "bf16"):
         dtype = torch.float16 if 'fp16' in precision else torch.bfloat16
@@ -362,7 +377,7 @@ def create_model(
     pretrained_loaded = False
     if pretrained:
         checkpoint_path = ''
-        pretrained_cfg = get_pretrained_cfg(model_name, pretrained)
+        pretrained_cfg = get_pretrained_cfg(model_name.split('/')[-1], pretrained)
         if pretrained_cfg:
             checkpoint_path = download_pretrained(pretrained_cfg, cache_dir=cache_dir)
             preprocess_cfg = merge_preprocess_dict(preprocess_cfg, pretrained_cfg)
@@ -440,7 +455,18 @@ def create_loss(args):
         return SigLipLoss(
             rank=args.rank,
             world_size=args.world_size,
+            dist_impl=args.loss_dist_impl,  # siglip has multiple distributed implementations to choose from
         )
+    elif args.continual_data:
+        return ContinualLoss(
+            local_loss=args.local_loss,
+            gather_with_grad=args.gather_with_grad,
+            cache_labels=True,
+            rank=args.rank,
+            world_size=args.world_size,
+            use_horovod=args.horovod,
+        )
+
     return ClipLoss(
         local_loss=args.local_loss,
         gather_with_grad=args.gather_with_grad,
