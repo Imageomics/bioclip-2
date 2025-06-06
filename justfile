@@ -1,8 +1,8 @@
 lint: fmt
-	ruff check src/imageomics scripts/
+	ruff check src/imageomics
 
 fmt:
-	ruff format src/imageomics scripts/
+	ruff format src/imageomics
 
 test: lint
 	pytest src/imageomics/
