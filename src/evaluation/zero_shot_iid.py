@@ -11,8 +11,6 @@ import datetime
 import logging
 import os
 import sys
-import json
-import numpy as np
 import torch
 import torch.nn.functional as F
 from tqdm import tqdm
@@ -29,7 +27,7 @@ from ..training.precision import get_autocast
 
 from .data import DatasetFromFile
 from .params import parse_args
-from .utils import init_device, random_seed, load_json
+from .utils import init_device, random_seed
 
 
 

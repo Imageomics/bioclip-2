@@ -1,6 +1,5 @@
 import argparse
 import ast
-import os
 
 class ParseKwargs(argparse.Action):
     def __call__(self, parser, namespace, values, option_string=None):
