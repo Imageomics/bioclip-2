@@ -50,7 +50,7 @@ tensorboard==2.14.0
 tensorboard-data-server==0.7.2
 timm==0.9.16
 tokenizers==0.15.2
-torch==2.2.1
+torch==2.7.1
 torchvision==0.17.1
 tqdm==4.66.2
 transformers==4.39.1
