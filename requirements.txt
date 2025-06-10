@@ -1,4 +1,4 @@
-certifi==2024.2.2
+certifi==2024.7.4
 charset-normalizer==3.3.2
 cmake==3.28.4
 filelock==3.13.1
