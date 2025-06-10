@@ -40,7 +40,7 @@ python-dateutil==2.9.0.post0
 pytz==2024.1
 PyYAML==6.0.1
 regex==2023.12.25
-requests==2.31.0
+requests==2.32.4
 requests-oauthlib==2.0.0
 rsa==4.9
 safetensors==0.4.2
