@@ -1,10 +1,9 @@
 import os
 import random
-import json
 import pandas as pd
 from PIL import Image
 from torchvision import datasets
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset
 from ..imageomics import naming_eval
 
 

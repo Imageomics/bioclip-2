@@ -13,11 +13,9 @@ import torch
 import torch.nn.functional as F
 from tqdm import tqdm
 import time
-import json
 import pickle
 import numpy as np
 import random
-import shutil
 from numpy import linalg as LA
 from scipy.stats import mode
 
@@ -28,7 +26,6 @@ from .utils import init_device, random_seed
 from ..open_clip import (
     create_model_and_transforms,
     get_cast_dtype,
-    get_tokenizer,
     trace_model,
 )
 from ..training.logger import setup_logging
