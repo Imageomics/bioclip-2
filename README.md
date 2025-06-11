@@ -95,7 +95,7 @@ Our code (this repository):
   author = {Jianyang Gu and Samuel Stevens and Elizabeth G. Campolongo and Matthew J. Thompson and Net Zhang and Jiaman Wu and Zheda Mai},
   doi = {TBA},
   title = {{B}io{CLIP} 2},
-  version = {v1.0.0},
+  version = {1.0.0},
   year = {2025}
 }
 ```
