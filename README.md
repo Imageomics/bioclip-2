@@ -1,4 +1,4 @@
-# BioCLIP 2
+# BioCLIP 2  [![DOI](https://zenodo.org/badge/991449538.svg)](https://doi.org/10.5281/zenodo.15644363)
 
 This repository contains the code for [BioCLIP 2](https://huggingface.co/imageomics/bioclip-2) training and evaluation (testing and visualizing embeddings). We developed this repository based on [BioCLIP](https://github.com/imageomics/BioCLIP) and [OpenCLIP](https://github.com/mlfoundations/open_clip).
 BioCLIP 2 is trained on the [TreeOfLife-200M dataset](https://huggingface.co/datasets/imageomics/TreeOfLife-200M) and achieves state-of-the-art performance on both species classification and other biological visual tasks. The BioCLIP 2 website is hosted from the `gh-pages` branch of this repository.
@@ -93,9 +93,10 @@ Our code (this repository):
 ```
 @software{bioclip2code,
   author = {Jianyang Gu and Samuel Stevens and Elizabeth G. Campolongo and Matthew J. Thompson and Net Zhang and Jiaman Wu and Zheda Mai},
-  doi = {TBA},
+  doi = {10.5281/zenodo.15644363},
   title = {{B}io{CLIP} 2},
   version = {1.0.0},
+  month = {jun},
   year = {2025}
 }
 ```
