@@ -134,4 +134,4 @@ Original Code:
 
 ## License
 
-BioCLIP 2 is released under the MIT License, though some elements of the code are copyright (also under MIT) by others (see [`LICENSE`](LICENSE)); detailed provenance information is provided in [`HISTORY.md`](HISTORY.md).
+BioCLIP 2 is released under the MIT License. Some elements of the code are copyright by others (see [`LICENSE`](LICENSE)); detailed provenance information is provided in [`HISTORY.md`](HISTORY.md).
