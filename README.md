@@ -47,7 +47,7 @@ We evaluated [BioCLIP 2](https://huggingface.co/imageomics/bioclip-2) on the sam
 - [Rare Species](https://huggingface.co/datasets/imageomics/rare-species): Nearly 12K images representing 400 species labeled Near Threatened through Extinct in the Wild by the [IUCN Red List](https://www.iucnredlist.org/).
 - [IDLE-OO Camera Traps](https://huggingface.co/datasets/imageomics/IDLE-OO-Camera-Traps): A new dataset we curated to evaluate performance on camera trap images. It is constructed from five [Labeled Information Library of Alexandria: Biology and Conservation (LILA BC)](https://lila.science) datasets labeled to the image-level, which we then balanced. See the [IDLE-OO Camera Traps dataset](https://huggingface.co/datasets/imageomics/IDLE-OO-Camera-Traps) for more details.
 
-The metadata used in evaluation is provided in [`data/annotation`](data/annotation/), including [NABirds](data/annotation/nabirds), [Rare Species](data/annotation/rare_species/), and other benchmarks from [Meta Album](data/annotation/meta-album/). All evaluation parameters are described in [src/evaluation/README.md](/evaluation/README.md).
+The metadata used in evaluation is provided in [`data/annotation`](data/annotation/), including [NABirds](data/annotation/nabirds), [Rare Species](data/annotation/rare_species/), and other benchmarks from [Meta Album](data/annotation/meta-album/). All evaluation parameters are described in [src/evaluation/README.md](src/evaluation/README.md).
 Please be sure to update the directories accordingly to reflect the locations of these data and metadata in `slurm/eval.sh` and run:
 ```
 sbatch slurm/eval.sh
