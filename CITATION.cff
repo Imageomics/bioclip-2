@@ -33,13 +33,13 @@ authors:
 cff-version: 1.2.0
 date-released: "2025-06-11"
 identifiers:
-  # - doi: "" # add on release
+  - doi: "10.5281/zenodo.15644363"
   - description: "The GitHub release URL of tag v1.0.0."
     type: url
     value: "https://github.com/Imageomics/bioclip-2/releases/tag/v1.0.0"
   - description: "The GitHub URL of the commit tagged with v1.0.0."
     type: url
-    value: "https://github.com/Imageomics/bioclip-2/tree/" # Add commit hash on release
+    value: "https://github.com/Imageomics/bioclip-2/tree/9a1ec9e463a348facd7fc1e39211c51e7b9cea9e"
 keywords:
   - clip
   - biology
