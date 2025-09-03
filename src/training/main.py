@@ -225,7 +225,6 @@ def main(args):
     if args.siglip:
         model_kwargs['init_logit_scale'] = np.log(10)  # different from CLIP
         model_kwargs['init_logit_bias'] = -10
-    load_weights_only = False if args.eval_imagenet else True
     model, preprocess_train, preprocess_val = create_model_and_transforms(
         args.model,
         args.pretrained,
@@ -242,7 +241,7 @@ def main(args):
         aug_cfg=args.aug_cfg,
         output_dict=True,
         is_continual=is_continual,
-        load_weights_only=load_weights_only,
+        load_weights_only=True,
         **model_kwargs
     )
     if args.distill:
