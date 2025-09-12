@@ -1,0 +1,73 @@
+{
+    "creators": [
+        {
+            "name": "Gu, Jianyang",
+            "affiliation": "The Ohio State University"
+        },
+        {
+            "name": "Stevens, Samuel",
+            "affiliation": "The Ohio State University"
+        },
+        {
+            "name": "Campolongo, Elizabeth G.",
+            "affiliation": "The Ohio State University"
+        },
+        {
+            "name": "Thompson, Matthew J.",
+            "affiliation": "The Ohio State University"
+        },
+        {
+            "name": "Zhang, Net",
+            "affiliation": "The Ohio State University"
+        },
+        {
+            "name": "Wu, Jiaman",
+            "affiliation": "The Ohio State University"
+        },
+        {
+            "name": "Mai, Zheda",
+            "affiliation": "The Ohio State University"
+        }
+    ],
+    "description": "Foundation models trained at scale exhibit remarkable emergent behaviors, learning new capabilities beyond their initial training objectives. We find such emergent behaviors in biological vision models via large-scale contrastive vision-language training. To achieve this, we first curate TreeOfLife-200M, comprising 214 million images of living organisms, the largest and most diverse biological organism image dataset to date. We then train BioCLIP 2 on TreeOfLife-200M to distinguish different species. Despite the narrow training objective, BioCLIP 2 yields extraordinary accuracy when applied to various biological visual tasks such as habitat classification and trait prediction. We identify emergent properties in the learned embedding space of BioCLIP 2. At the inter-species level, the embedding distribution of different species aligns closely with functional and ecological meanings (e.g. beak sizes and habitats). At the intra-species level, instead of being diminished, the intra-species variations (e.g. life stages and sexes) are preserved and better separated in subspaces orthogonal to inter-species distinctions. We provide formal proof and analyses to explain why hierarchical supervision and contrastive objectives encourage these emergent properties. Crucially, our results reveal that these properties become increasingly significant with larger-scale training data, leading to a biologically meaningful embedding space.",
+    "notes": "<p>If you use this software, please cite both the article and the software itself.</p>\n<p>&nbsp;</p>\n<p>Article citation:</p>\n<p><code>@article{gu2025bioclip,</code><br><code>&nbsp; title = {{B}io{CLIP} 2: Emergent Properties from Scaling Hierarchical Contrastive Learning},&nbsp;</code><br><code>&nbsp; author = {Jianyang Gu and Samuel Stevens and Elizabeth G Campolongo and Matthew J Thompson and Net Zhang and Jiaman Wu and Andrei Kopanev and Zheda Mai and Alexander E. White and James Balhoff and Wasila M Dahdul and Daniel Rubenstein and Hilmar Lapp and Tanya Berger-Wolf and Wei-Lun Chao and Yu Su},</code><br><code>&nbsp; year = {2025},</code><br><code>&nbsp; eprint={2505.23883},</code><br><code>&nbsp; archivePrefix={arXiv},</code><br><code>&nbsp; primaryClass={cs.CV},</code><br><code>&nbsp; url={https://arxiv.org/abs/2505.23883},&nbsp;</code><br><code>}</code></p>",
+    "keywords": [
+        "clip",
+        "biology",
+        "CV",
+        "imageomics",
+        "animals",
+        "plants",
+        "fungi",
+        "species",
+        "images",
+        "taxonomy",
+        "rare species",
+        "endangered species",
+        "evolutionary biology",
+        "multimodal",
+        "knowledge-guided"
+    ],
+    "license": {
+        "id": "MIT"
+    },
+    "publication_date": "2025-09-03",
+    "title": "BioCLIP 2",
+    "version": "1.0.1",
+    "grants": [
+        {
+            "id": "021nxhr62::2118240"
+        }
+    ],
+    "references": [
+        "Stevens, S., Wu, J., Thompson, M. J., Campolongo, E. G., Song, C. H., Carlyn, D. E., Dong, L., Dahdul, W. M., Stewart, C., Berger-Wolf, T., Chao, W., & Su, Y. (2024). BioCLIP: A Vision Foundation Model for the Tree of Life [Conference paper]. Proceedings of IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)",
+        "Ilharco, G., Wortsman, M., Wightman, R., Gordon, C., Carlini, N., Taori, R., Dave, A., Shankar, V., Namkoong, H., Miller, J., Hajishirzi, H., Farhadi, A., & Schmidt, L. (2021). OpenCLIP (Version v0.1) [Computer software]. https://doi.org/10.5281/zenodo.5143773"
+    ],
+    "related_identifiers": [
+        {
+        "identifier": "10.48550/arXiv.2505.23883",
+        "relation": "isSupplementTo",
+        "resource_type": "publication-preprint"
+        }
+    ]
+}
