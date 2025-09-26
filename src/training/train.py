@@ -15,7 +15,7 @@ try:
 except ImportError:
     wandb = None
 
-from ..open_clip import get_cast_dtype, CLIP, CustomTextCLIP
+from ..open_clip import get_input_dtype, CLIP, CustomTextCLIP
 from .distributed import is_master
 from .zero_shot import zero_shot_eval
 from .precision import get_autocast
@@ -62,12 +62,14 @@ class AverageMeter(object):
         self.count += n
         self.avg = self.sum / self.count
 
+
 def postprocess_clip_output(model_out):
     return {
         "image_features": model_out[0],
         "text_features": model_out[1],
         "logit_scale": model_out[2]
     }
+
 
 def unwrap_model(model):
     if hasattr(model, 'module'):
@@ -85,9 +87,8 @@ def backward(total_loss, scaler):
 
 def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist_model, args, tb_writer=None):
     device = torch.device(args.device)
-    autocast = get_autocast(args.precision)
-    cast_dtype = get_cast_dtype(args.precision)
-
+    autocast = get_autocast(args.precision, device_type=device.type)
+    input_dtype = get_input_dtype(args.precision)
 
     model.train()
     if args.distill:
@@ -130,7 +131,7 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
             images = torch.cat((images, continual_images), dim=0)
             texts = torch.cat((texts, continual_texts), dim=0)
 
-        images = images.to(device=device, dtype=cast_dtype, non_blocking=True)
+        images = images.to(device=device, dtype=input_dtype, non_blocking=True)
         texts = texts.to(device=device, non_blocking=True)
 
         data_time_m.update(time.time() - end)
@@ -143,7 +144,7 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
                 if args.distill:
                     with torch.no_grad():
                         dist_model_out = dist_model(images, texts)
-                    model_out.update({f'dist_{k}' : v for k, v in dist_model_out.items()})
+                    model_out.update({f'dist_{k}': v for k, v in dist_model_out.items()})
                 if "continual" in data:
                     model_out["continual_len"] = len(continual_images)
                 losses = loss(**model_out, output_dict=True)
@@ -157,7 +158,10 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
             with torch.no_grad():
                 with autocast():
                     model_out = model(images, texts)
-                    model_out.pop("logit_scale")
+
+                    for f in ("logit_scale", "logit_bias"):
+                        model_out.pop(f, None)
+
                     for key, val in model_out.items():
                         if key in accum_features:
                             accum_features[key].append(val)
@@ -181,15 +185,23 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
                 texts = accum_texts[j]
                 with autocast():
                     model_out = model(images, texts)
-                    logit_scale = model_out.pop("logit_scale")
+
+                    inputs_no_accum = {}
+                    inputs_no_accum["logit_scale"] = logit_scale = model_out.pop("logit_scale")
+                    if "logit_bias" in model_out:
+                        inputs_no_accum["logit_bias"] = model_out.pop("logit_bias")
+
                     inputs = {}
                     for key, val in accum_features.items():
                         accumulated = accum_features[key]
-                        inputs[key] = torch.cat(accumulated[:j] +  [model_out[key]] + accumulated[j + 1:])
-                    losses = loss(**inputs, logit_scale=logit_scale, output_dict=True)
+                        inputs[key] = torch.cat(accumulated[:j] + [model_out[key]] + accumulated[j + 1:])
+
+                    losses = loss(**inputs, **inputs_no_accum, output_dict=True)
                     del inputs
+                    del inputs_no_accum
                     total_loss = sum(losses.values())
                     losses["loss"] = total_loss
+
                 backward(total_loss, scaler)
 
         if scaler is not None:
@@ -262,32 +274,35 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
             }            
             log_data.update({name:val.val for name,val in losses_m.items()})
 
-            for name, val in log_data.items():
-                name = "train/" + name
-                if tb_writer is not None:
-                    tb_writer.add_scalar(name, val, step)
-                if args.wandb:
-                    assert wandb is not None, 'Please install wandb.'
-                    wandb.log({name: val, 'step': step})
+            log_data = {"train/" + name: val for name, val in log_data.items()}
 
+            if tb_writer is not None:
+                for name, val in log_data.items():
+                    tb_writer.add_scalar(name, val, step)
+            
+            if args.wandb:
+                assert wandb is not None, 'Please install wandb.'
+                log_data['step'] = step  # for backwards compatibility
+                wandb.log(log_data, step=step)
+            
             # resetting batch / data time meters per log window
             batch_time_m.reset()
             data_time_m.reset()
     # end for
 
 
-def evaluate(model, data, epoch, args, tb_writer=None):
+def evaluate(model, data, epoch, args, tb_writer=None, tokenizer=None):
     metrics = {}
     if not is_master(args):
-        return
+        return metrics
     device = torch.device(args.device)
     model.eval()
 
-    zero_shot_metrics = zero_shot_eval(model, data, epoch, args)
+    zero_shot_metrics = zero_shot_eval(model, data, epoch, args, tokenizer=tokenizer)
     metrics.update(zero_shot_metrics)
 
-    autocast = get_autocast(args.precision)
-    cast_dtype = get_cast_dtype(args.precision)
+    autocast = get_autocast(args.precision, device_type=device.type)
+    input_dtype = get_input_dtype(args.precision)
 
     if 'val' in data and (args.val_frequency and ((epoch % args.val_frequency) == 0 or epoch == args.epochs)):
         dataloader = data['val'].dataloader
@@ -297,7 +312,7 @@ def evaluate(model, data, epoch, args, tb_writer=None):
         cumulative_loss = 0.0
         cumulative_acc = 0.0
         cumulative_gen_loss = 0.0
-        with torch.no_grad():
+        with torch.inference_mode():
             for i, batch in enumerate(dataloader):
                 if args.text_type == 'random':
                     images, sci, com, taxon, sci_com, taxon_com = batch
@@ -305,7 +320,7 @@ def evaluate(model, data, epoch, args, tb_writer=None):
                     texts = random.choice([sci, com, taxon, sci_com, taxon_com])
                 else:
                     images, texts = batch
-                images = images.to(device=device, dtype=cast_dtype, non_blocking=True)
+                images = images.to(device=device, dtype=input_dtype, non_blocking=True)
                 texts = texts.to(device=device, non_blocking=True)
 
                 with autocast():
@@ -341,55 +356,60 @@ def evaluate(model, data, epoch, args, tb_writer=None):
                         logging.info(
                             f"Generative Loss: {cumulative_gen_loss / num_samples:.6f}\t")
 
-
             loss = cumulative_loss / num_samples
             acc = cumulative_acc / num_samples
-            metrics.update({
-                "clip_val_loss": loss.item(), 
-                "acc": acc.item(),
-                "epoch": epoch, 
-                "num_samples": num_samples
-            })
+            metrics.update(
+                {"clip_val_loss": loss.item(), "acc": acc.item(), "epoch": epoch, "num_samples": num_samples}
+            )
             if gen_loss is not None:
                 gen_loss = cumulative_gen_loss / num_samples
                 metrics.update({"val_generative_loss": gen_loss.item()})
 
     if not metrics:
-        return
+        return metrics
 
     logging.info(
         f"Eval Epoch: {epoch} "
         + "\t".join([f"{k}: {round(v, 4):.4f}" for k, v in metrics.items()])
     )
 
+    log_data = {"val/" + name: val for name, val in metrics.items()}
+
     if args.save_logs:
         if tb_writer is not None:
-            for name, val in metrics.items():
-                tb_writer.add_scalar(f"val/{name}", val, epoch)
+            for name, val in log_data.items():
+                tb_writer.add_scalar(name, val, epoch)
 
         with open(os.path.join(args.checkpoint_path, "results.jsonl"), "a+") as f:
             f.write(json.dumps(metrics))
             f.write("\n")
 
-    if args.report_to == 'wandb':
+    if args.wandb:
         assert wandb is not None, 'Please install wandb.'
-        for name, val in metrics.items():
-            wandb.log({f"val/{name}": val, 'epoch': epoch})
+        if 'train' in data:
+            dataloader = data['train'].dataloader
+            num_batches_per_epoch = dataloader.num_batches // args.accum_freq
+            step = num_batches_per_epoch * epoch
+        else:
+            step = None
+        log_data['epoch'] = epoch
+        wandb.log(log_data, step=step)
+
+    return metrics
 
 
-def get_clip_metrics(image_features, text_features, logit_scale, device):
+def get_clip_metrics(image_features, text_features, logit_scale):
     metrics = {}
-    logits_per_image = (logit_scale * image_features.to(device) @ text_features.to(device).t()).cpu()
-    logits_per_text = logits_per_image.t()
-    logits = {"image_to_text": logits_per_image, "text_to_image": logits_per_text}
+    logits_per_image = (logit_scale * image_features @ text_features.t()).detach().cpu()
+    logits_per_text = logits_per_image.t().detach().cpu()
 
+    logits = {"image_to_text": logits_per_image, "text_to_image": logits_per_text}
     ground_truth = torch.arange(len(text_features)).view(-1, 1)
 
     for name, logit in logits.items():
-        # argsort is also quite slow (20-30 seconds)
-        ranking = torch.argsort(logit, descending=True, dim=1)
+        ranking = torch.argsort(logit, descending=True)
         preds = torch.where(ranking == ground_truth)[1]
-        preds = preds.numpy()
+        preds = preds.detach().cpu().numpy()
         metrics[f"{name}_mean_rank"] = preds.mean() + 1
         metrics[f"{name}_median_rank"] = np.floor(np.median(preds)) + 1
         for k in [1, 5, 10]:
