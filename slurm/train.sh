@@ -43,7 +43,7 @@ srun torchrun --nnodes=4 --nproc_per_node 8 \
   --local-loss \
   --gather-with-grad \
   --grad-checkpointing \
-  --logs './logs' \
+  --logs-dir './logs' \
   --precision pure_bf16 \
   --continual-data '[laion-dir]/{00000..03999}.tar' \
   --continual_text_type '' \

@@ -29,7 +29,7 @@ The [TreeOfLife-200M](https://huggingface.co/datasets/imageomics/TreeOfLife-200M
 
 Clone this repository, then install the requirements:
 ```
-conda env create -f requirements-training.yml
+conda env create -f requirements.yml
 ```
 
 To train the model, run:
