@@ -13,7 +13,6 @@ Requested ciation:
 """
 
 import sys
-import datetime
 import logging
 import os.path
 
@@ -30,12 +29,18 @@ from .faster_mix_k_means_pytorch import K_Means as SemiSupKMeans
 from scipy.optimize import linear_sum_assignment as linear_assignment
 
 from .params import parse_args
-from .utils import init_device, random_seed
+from .utils import (
+    configure_logging,
+    configure_torch_backends,
+    init_device,
+    log_params,
+    normalize_force_image_size,
+    random_seed,
+)
 from ..open_clip import (
     create_model_and_transforms,
     trace_model,
 )
-from ..training.logger import setup_logging
 
 
 def cluster_acc(y_true, y_pred):
@@ -269,52 +274,15 @@ if __name__ == "__main__":
     # 1. Load model
     args = parse_args(sys.argv[1:])
 
-    if torch.cuda.is_available():
-        # This enables tf32 on Ampere GPUs which is only 8% slower than
-        # float16 and almost as accurate as float32
-        # This was a default in pytorch until 1.12
-        torch.backends.cuda.matmul.allow_tf32 = True
-        torch.backends.cudnn.benchmark = True
-        torch.backends.cudnn.deterministic = False
+    configure_torch_backends(deterministic=False)
 
     device = init_device(args)
 
-    args.save_logs = args.logs and args.logs.lower() != "none"
+    log_base_path = configure_logging(
+        args, "Herbarium19", include_workers=True, log_filename="out.log"
+    )
 
-    # get the name of the experiments
-    if args.save_logs and args.name is None:
-        # sanitize model name for filesystem/uri use
-        model_name_safe = args.model.replace("/", "-")
-        date_str = datetime.datetime.now().strftime("%Y_%m_%d-%H_%M_%S")
-        args.name = "-".join(
-            [
-                date_str,
-                f"model_{model_name_safe}",
-                f"b_{args.batch_size}",
-                f"j_{args.workers}",
-                f"p_{args.precision}",
-                "zero_shot_iid",
-            ]
-        )
-    if args.save_logs is None:
-        args.log_path = None
-    else:
-        log_base_path = os.path.join(args.logs, args.name)
-        args.log_path = None
-        os.makedirs(log_base_path, exist_ok=True)
-        log_filename = "out.log"
-        args.log_path = os.path.join(log_base_path, log_filename)
-
-    # Setup text logger
-    args.log_level = logging.DEBUG if args.debug else logging.INFO
-    setup_logging(args.log_path, args.log_level)
-
-    if (
-        isinstance(args.force_image_size, (tuple, list))
-        and len(args.force_image_size) == 1
-    ):
-        # arg is nargs, single (square) image size list -> int
-        args.force_image_size = args.force_image_size[0]
+    normalize_force_image_size(args)
 
     random_seed(args.seed, 0)
     model, preprocess_train, preprocess_val = create_model_and_transforms(
@@ -332,7 +300,6 @@ if __name__ == "__main__":
         image_std=args.image_std,
         aug_cfg=args.aug_cfg,
         output_dict=True,
-        load_weights_only=False,
     )
 
     random_seed(args.seed, args.rank)
@@ -342,18 +309,7 @@ if __name__ == "__main__":
 
     logging.info("Model:")
     logging.info(f"{str(model)}")
-    logging.info("Params:")
-    if  args.save_logs is None:
-        for name in sorted(vars(args)):
-            val = getattr(args, name)
-            logging.info(f"  {name}: {val}")
-    else:
-        params_file = os.path.join(args.logs, args.name, "params.txt")
-        with open(params_file, "w") as f:
-            for name in sorted(vars(args)):
-                val = getattr(args, name)
-                logging.info(f"  {name}: {val}")
-                f.write(f"{name}: {val}\n")
+    log_params(args, log_base_path)
 
     # Load Datasets.
     herb_path_splits = './src/evaluation/herbarium_19_class_splits.pkl'
@@ -386,28 +342,58 @@ if __name__ == "__main__":
     l_labels = train_labels[train_masks]
     u_labels = train_labels[~train_masks]
 
-    print('Fitting Semi-Supervised K-Means...')
-    K = len(train_classes) + len(unlabeled_classes)
-    kmeans = SemiSupKMeans(k=K, tolerance=1e-4, max_iterations=10, init='k-means++',
-                           n_init=1, random_state=args.seed, n_jobs=None, pairwise_batch_size=1024, mode=None)
+    scores = []
+    num_runs = 3
+    for run in range(num_runs):
+        run_seed = args.seed + run
+        random_seed(run_seed, args.rank)
 
-    kmeans.fit_mix(u_features, l_features, l_labels)
+        print("Fitting Semi-Supervised K-Means...")
+        K = len(train_classes) + len(unlabeled_classes)
+        kmeans = SemiSupKMeans(
+            k=K,
+            tolerance=1e-4,
+            max_iterations=10,
+            init="k-means++",
+            n_init=1,
+            random_state=run_seed,
+            n_jobs=None,
+            pairwise_batch_size=1024,
+            mode=None,
+        )
 
-    all_preds = kmeans.labels_
+        kmeans.fit_mix(u_features, l_features, l_labels)
 
-    # -----------------------
-    # EVALUATE
-    # -----------------------
-    # Get preds corresponding to unlabelled set
-    preds = all_preds[~train_masks]
+        all_preds = kmeans.labels_
 
-    # Get portion of mask_cls which corresponds to the unlabelled set
-    mask = train_masks_cls[~train_masks]
-    mask = mask.bool()
+        # -----------------------
+        # EVALUATE
+        # -----------------------
+        # Get preds corresponding to unlabelled set
+        preds = all_preds[~train_masks]
 
-    u_labels = u_labels.long().cpu().numpy()
-    accs = np.zeros_like(u_labels)
-    accs[mask] = cluster_acc(u_labels[mask], preds[mask])
-    accs[~mask] = cluster_acc(u_labels[~mask], preds[~mask])
+        # Get portion of mask_cls which corresponds to the unlabelled set
+        mask = train_masks_cls[~train_masks]
+        mask = mask.bool()
 
-    logging.info("KMeans clustering accuracy: %.2f%%", 100 * accs.mean())
+        u_labels_np = u_labels.long().cpu().numpy()
+        accs = np.zeros_like(u_labels_np)
+        accs[mask] = cluster_acc(u_labels_np[mask], preds[mask])
+        accs[~mask] = cluster_acc(u_labels_np[~mask], preds[~mask])
+
+        score = accs.mean()
+        logging.info(
+            "Run %d/%d KMeans clustering accuracy: %.2f%%",
+            run + 1,
+            num_runs,
+            100 * score,
+        )
+        scores.append(score)
+
+    scores = np.array(scores)
+    logging.info(
+        "Mean accuracy over %d runs: %.2f%%, std: %.2f%%",
+        num_runs,
+        100 * np.mean(scores),
+        100 * np.std(scores),
+    )

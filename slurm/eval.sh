@@ -11,8 +11,8 @@
 export CUDA_VISIBLE_DEVICES=0
 
 LOG_FILEPATH="../storage/logs"
-MODEL_TYPE="ViT-L-14"
-PRETRAINED="hf-hub:imageomics/bioclip-2"
+MODEL_TYPE="hf-hub:imageomics/bioclip-2"
+PRETRAINED=False
 
 TASK_TYPE="all"
 TEXT_TYPE="taxon_com"
@@ -108,7 +108,7 @@ for i in "${!DATA_ROOTS[@]}"; do
 done
 
 
-TEXT_TYPE="sci_com"
+TEXT_TYPE="taxon_com"
 DATA_ROOT="[test-set-dir]/rare-species/"
 LABEL_FILE="[test-set-dir]/rare-species/metadata.csv"
 

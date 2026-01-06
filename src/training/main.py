@@ -1,3 +1,4 @@
+import copy
 import glob
 import logging
 import os
@@ -6,11 +7,11 @@ import subprocess
 import sys
 import random
 from datetime import datetime
+from functools import partial
 
 import numpy as np
 import torch
 from torch import optim
-from torch.cuda.amp import GradScaler
 
 try:
     import wandb
@@ -44,10 +45,6 @@ def random_seed(seed=42, rank=0):
     torch.manual_seed(seed + rank)
     np.random.seed(seed + rank)
     random.seed(seed + rank)
-    os.environ['PYTHONHASHSEED'] = str(seed + rank)
-    torch.cuda.manual_seed(seed + rank)
-    torch.cuda.manual_seed_all(seed + rank)
-    torch.backends.cudnn.deterministic = True
 
 
 def natural_key(string_):
@@ -80,7 +77,7 @@ def main(args):
         # This was a default in pytorch until 1.12
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.benchmark = True
-        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.deterministic = False
 
     # fully initialize distributed device environment
     device = init_distributed_device(args)
@@ -103,7 +100,7 @@ def main(args):
         ])
 
     resume_latest = args.resume == 'latest'
-    log_base_path = os.path.join(args.logs, args.name)
+    log_base_path = os.path.join(args.logs_dir, args.name)
     args.log_path = None
     if is_master(args, local=args.log_local):
         os.makedirs(log_base_path, exist_ok=True)
@@ -173,8 +170,8 @@ def main(args):
     if is_master(args) and args.remote_sync is not None:
         # first make sure it works
         result = remote_sync(
-            os.path.join(args.logs, args.name), 
-            os.path.join(args.remote_sync, args.name), 
+            os.path.join(args.logs_dir, args.name),
+            os.path.join(args.remote_sync, args.name),
             args.remote_sync_protocol
         )
         if result:
@@ -185,8 +182,8 @@ def main(args):
         # if all looks good, start a process to do this every args.remote_sync_frequency seconds
         remote_sync_process = start_sync_process(
             args.remote_sync_frequency,
-            os.path.join(args.logs, args.name), 
-            os.path.join(args.remote_sync, args.name), 
+            os.path.join(args.logs_dir, args.name),
+            os.path.join(args.remote_sync, args.name),
             args.remote_sync_protocol
         )
         remote_sync_process.start()
@@ -235,26 +232,39 @@ def main(args):
         force_custom_text=args.force_custom_text,
         force_patch_dropout=args.force_patch_dropout,
         force_image_size=args.force_image_size,
-        pretrained_image=args.pretrained_image,
+        force_context_length=args.force_context_length,
         image_mean=args.image_mean,
         image_std=args.image_std,
+        image_interpolation=args.image_interpolation,
+        image_resize_mode=args.image_resize_mode,  # only effective for inference
         aug_cfg=args.aug_cfg,
+        pretrained_image=args.pretrained_image,
         output_dict=True,
         is_continual=is_continual,
-        load_weights_only=True,
-        **model_kwargs
+        cache_dir=args.cache_dir,
+        **model_kwargs,
     )
     if args.distill:
-        # FIXME: currenlty assumes the model your distilling from has the same tokenizer & transforms.
+        # FIXME: currently assumes the model you're distilling from has the same tokenizer & transforms.
         dist_model, _, _ = create_model_and_transforms(
             args.distill_model, 
             args.distill_pretrained,
             device=device,
             precision=args.precision,
             output_dict=True,
-            image_mean=args.image_mean,
-            image_std=args.image_std,
+            cache_dir=args.cache_dir,
         )
+    if args.use_bnb_linear is not None:
+        print('=> using a layer from bitsandbytes.\n'
+              '   this is an experimental feature which requires two extra pip installs\n'
+              '   pip install bitsandbytes triton'
+              '   please make sure to use triton 2.0.0')
+        import bitsandbytes as bnb
+        from open_clip.utils import replace_linear
+        print(f'=> replacing linear layers with {args.use_bnb_linear}')
+        linear_replacement_cls = getattr(bnb.nn.triton_based_modules, args.use_bnb_linear)
+        replace_linear(model, linear_replacement_cls)
+        model = model.to(device)
 
     random_seed(args.seed, args.rank)
 
@@ -278,13 +288,13 @@ def main(args):
         logging.info("Model:")
         logging.info(f"{str(model)}")
         logging.info("Params:")
-        params_file = os.path.join(args.logs, args.name, "params.txt")
+        params_file = os.path.join(args.logs_dir, args.name, "params.txt")
         with open(params_file, "w") as f:
             for name in sorted(vars(args)):
                 val = getattr(args, name)
                 logging.info(f"  {name}: {val}")
                 f.write(f"{name}: {val}\n")
-
+    
     if args.distributed and not args.horovod:
         if args.use_bn_sync:
             model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
@@ -324,6 +334,7 @@ def main(args):
                 **opt_kwargs,
             )
         else:
+            # If some params are not passed, we use the default values based on model name.
             exclude = lambda n, p: p.ndim < 2 or "bn" in n or "ln" in n or "bias" in n or 'logit_scale' in n
             include = lambda n, p: not exclude(n, p)
 
@@ -331,21 +342,38 @@ def main(args):
             gain_or_bias_params = [p for n, p in named_parameters if exclude(n, p) and p.requires_grad]
             rest_params = [p for n, p in named_parameters if include(n, p) and p.requires_grad]
 
-            optimizer = optim.AdamW(
-                [
-                    {"params": gain_or_bias_params, "weight_decay": 0.},
-                    {"params": rest_params, "weight_decay": args.wd},
-                ],
-                lr=args.lr,
-                betas=(args.beta1, args.beta2),
-                eps=args.eps,
+            if opt == 'adamw':
+                optimizer = optim.AdamW(
+                    [
+                        {"params": gain_or_bias_params, "weight_decay": 0.},
+                        {"params": rest_params, "weight_decay": args.wd},
+                    ],
+                    lr=args.lr,
+                    betas=(args.beta1, args.beta2),
+                    eps=args.eps,
+                )
+            else:
+                assert False, f'Unknown optimizer {opt}'
+
+        if is_master(args):
+            defaults = copy.deepcopy(optimizer.defaults)
+            defaults['weight_decay'] = args.wd
+            defaults = ', '.join([f'{k}: {v}' for k, v in defaults.items()])
+            logging.info(
+                f'Created {type(optimizer).__name__} ({args.opt}) optimizer: {defaults}'
             )
+
         if args.horovod:
             optimizer = hvd.DistributedOptimizer(optimizer, named_parameters=model.named_parameters())
             hvd.broadcast_parameters(model.state_dict(), root_rank=0)
             hvd.broadcast_optimizer_state(optimizer, root_rank=0)
 
-        scaler = GradScaler() if args.precision == "amp" else None
+        scaler = None
+        if args.precision == "amp":
+            try:
+                scaler = torch.amp.GradScaler(device=device)
+            except (AttributeError, TypeError) as e:
+                scaler = torch.cuda.amp.GradScaler()
 
     # optionally resume from a checkpoint
     start_epoch = 0
@@ -369,7 +397,13 @@ def main(args):
             logging.info(f"=> loaded checkpoint '{args.resume}' (epoch {start_epoch})")
 
     # initialize datasets
-    data = get_data(args, (preprocess_train, preprocess_val), epoch=start_epoch, tokenizer=get_tokenizer(args.model))
+    tokenizer = get_tokenizer(args.model, cache_dir=args.cache_dir, context_length=args.force_context_length)
+    data = get_data(
+        args,
+        (preprocess_train, preprocess_val),
+        epoch=start_epoch,
+        tokenizer=tokenizer,
+    )
     assert len(data), 'At least one train or eval dataset must be specified.'
 
     # create scheduler if train
@@ -393,7 +427,7 @@ def main(args):
             exit(1)
 
     # determine if this worker should save logs and checkpoints. only do so if it is rank == 0
-    args.save_logs = args.logs and args.logs.lower() != 'none' and is_master(args)
+    args.save_logs = args.logs_dir and args.logs_dir.lower() != 'none' and is_master(args)
     writer = None
     if args.save_logs and args.tensorboard:
         assert tensorboard is not None, "Please install tensorboard."
@@ -408,7 +442,6 @@ def main(args):
         # you will have to configure this for your project!
         wandb.init(
             project=args.wandb_project_name,
-            dir=args.logs,
             name=args.name,
             id=args.name,
             notes=args.wandb_notes,
@@ -421,8 +454,27 @@ def main(args):
         wandb.save(params_file)
         logging.debug('Finished loading wandb.')
 
+    # Pytorch 2.0 adds '_orig_mod.' prefix to keys of state_dict() of compiled models.
+    # For compatibility, we save state_dict() of the original model, which shares the
+    # weights without the prefix.
+    original_model = model
+    if args.torchcompile:
+        logging.info('Compiling model...')
+
+        if args.grad_checkpointing and args.distributed:
+            logging.info('Disabling DDP dynamo optimizer when grad checkpointing enabled.')
+            # As of now (~PyTorch 2.4/2.5), compile + grad checkpointing work, but DDP optimizer must be disabled
+            torch._dynamo.config.optimize_ddp = False
+
+        model = torch.compile(original_model)
+
     if 'train' not in data:
-        evaluate(model, data, start_epoch, args, writer)
+        # If using int8, convert to inference mode.
+        if args.use_bnb_linear is not None:
+            from open_clip.utils import convert_int8_model_to_inference_mode
+            convert_int8_model_to_inference_mode(model)
+        # Evaluate.
+        evaluate(model, data, start_epoch, args, tb_writer=writer, tokenizer=tokenizer)
         return
 
     loss = create_loss(args)
@@ -434,15 +486,16 @@ def main(args):
         train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist_model, args, tb_writer=writer)
         completed_epoch = epoch + 1
 
-        if any(v in data for v in ('val', 'imagenet-val', 'imagenet-v2')):
-            evaluate(model, data, completed_epoch, args, writer)
+        # FIX: worker collapse when using torch.compile
+        if any(v in data for v in ('val', 'imagenet-val', 'imagenet-v2')) and not args.torchcompile:
+            evaluate(model, data, completed_epoch, args, tb_writer=writer, tokenizer=tokenizer)
 
         # Saving checkpoints.
         if args.save_logs:
             checkpoint_dict = {
                 "epoch": completed_epoch,
                 "name": args.name,
-                "state_dict": model.state_dict(),
+                "state_dict": original_model.state_dict(),
                 "optimizer": optimizer.state_dict(),
             }
             if scaler is not None:
@@ -475,8 +528,8 @@ def main(args):
         logging.info('Final remote sync.')
         remote_sync_process.terminate()
         result = remote_sync(
-            os.path.join(args.logs, args.name), 
-            os.path.join(args.remote_sync, args.name), 
+            os.path.join(args.logs_dir, args.name),
+            os.path.join(args.remote_sync, args.name),
             args.remote_sync_protocol
         )
         if result:
@@ -487,7 +540,7 @@ def main(args):
 
 def copy_codebase(args):
     from shutil import copytree, ignore_patterns
-    new_code_path = os.path.join(args.logs, args.name, "code")
+    new_code_path = os.path.join(args.logs_dir, args.name, "code")
     if os.path.exists(new_code_path):
         print(
             f"Error. Experiment already exists at {new_code_path}. Use --name to specify a new experiment."

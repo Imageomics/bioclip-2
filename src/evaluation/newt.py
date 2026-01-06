@@ -19,7 +19,6 @@ If you use this evaluation, be sure to cite the original work:
 import os
 import sys
 import logging
-import datetime
 import scipy.stats
 import numpy as np
 import polars as pl
@@ -33,12 +32,18 @@ import sklearn.model_selection
 import torch
 
 from .params import parse_args
-from .utils import init_device, random_seed
+from .utils import (
+    configure_logging,
+    configure_torch_backends,
+    init_device,
+    log_params,
+    normalize_force_image_size,
+    random_seed,
+)
 from ..open_clip import (
     create_model_and_transforms,
     trace_model,
 )
-from ..training.logger import setup_logging
 
 
 class Dataset(torch.utils.data.Dataset):
@@ -133,6 +138,7 @@ def get_all_task_specific_features(args, backbone, img_transform):
     all_features = torch.cat(all_features, dim=0).cpu()
     all_ids = np.array(all_ids)
 
+    tasks = []
     for task in df.get_column("task").unique():
         task_df = df.filter(pl.col("task") == task)
 
@@ -147,7 +153,10 @@ def get_all_task_specific_features(args, backbone, img_transform):
         sub_cluster = task_df.item(row=0, column="task_subcluster")
         if not sub_cluster:
             sub_cluster = "none"
-        yield Task(task, cluster, sub_cluster, features, labels, is_train.to_numpy(), ids)
+        
+        tasks.append(Task(task, cluster, sub_cluster, features, labels, is_train.to_numpy(), ids))
+    
+    return tasks
 
 
 def l2_normalize(features):
@@ -184,52 +193,15 @@ if __name__ == "__main__":
     # 1. Load model
     args = parse_args(sys.argv[1:])
 
-    if torch.cuda.is_available():
-        # This enables tf32 on Ampere GPUs which is only 8% slower than
-        # float16 and almost as accurate as float32
-        # This was a default in pytorch until 1.12
-        torch.backends.cuda.matmul.allow_tf32 = True
-        torch.backends.cudnn.benchmark = True
-        torch.backends.cudnn.deterministic = False
+    configure_torch_backends(deterministic=False)
 
     device = init_device(args)
 
-    args.save_logs = args.logs and args.logs.lower() != "none"
+    log_base_path = configure_logging(
+        args, "NeWT", include_workers=True, log_filename="out.log"
+    )
 
-    # get the name of the experiments
-    if args.save_logs and args.name is None:
-        # sanitize model name for filesystem/uri use
-        model_name_safe = args.model.replace("/", "-")
-        date_str = datetime.datetime.now().strftime("%Y_%m_%d-%H_%M_%S")
-        args.name = "-".join(
-            [
-                date_str,
-                f"model_{model_name_safe}",
-                f"b_{args.batch_size}",
-                f"j_{args.workers}",
-                f"p_{args.precision}",
-                "zero_shot_iid",
-            ]
-        )
-    if args.save_logs is None:
-        args.log_path = None
-    else:
-        log_base_path = os.path.join(args.logs, args.name)
-        args.log_path = None
-        os.makedirs(log_base_path, exist_ok=True)
-        log_filename = "out.log"
-        args.log_path = os.path.join(log_base_path, log_filename)
-
-    # Setup text logger
-    args.log_level = logging.DEBUG if args.debug else logging.INFO
-    setup_logging(args.log_path, args.log_level)
-
-    if (
-        isinstance(args.force_image_size, (tuple, list))
-        and len(args.force_image_size) == 1
-    ):
-        # arg is nargs, single (square) image size list -> int
-        args.force_image_size = args.force_image_size[0]
+    normalize_force_image_size(args)
 
     random_seed(args.seed, 0)
     model, preprocess_train, preprocess_val = create_model_and_transforms(
@@ -247,7 +219,6 @@ if __name__ == "__main__":
         image_std=args.image_std,
         aug_cfg=args.aug_cfg,
         output_dict=True,
-        load_weights_only=False,
     )
 
     random_seed(args.seed, args.rank)
@@ -257,44 +228,48 @@ if __name__ == "__main__":
 
     logging.info("Model:")
     logging.info(f"{str(model)}")
-    logging.info("Params:")
-    if  args.save_logs is None:
-        for name in sorted(vars(args)):
-            val = getattr(args, name)
-            logging.info(f"  {name}: {val}")
-    else:
-        params_file = os.path.join(args.logs, args.name, "params.txt")
-        with open(params_file, "w") as f:
-            for name in sorted(vars(args)):
-                val = getattr(args, name)
-                logging.info(f"  {name}: {val}")
-                f.write(f"{name}: {val}\n")
+    log_params(args, log_base_path)
 
     # 2. Get features.
     all_task_features = get_all_task_specific_features(args, model, preprocess_val)
 
-    # Fit SVMs.
-    y_preds = []
-    y_trues = []
-    for task in all_task_features:
-        (x_train, y_train), (x_test, y_test) = task.splits
+    scores = []
+    num_runs = 3
+    for run in range(num_runs):
+        run_seed = args.seed + run
+        random_seed(run_seed, args.rank)
 
-        x_mean = x_train.mean(axis=0, keepdims=True)
+        # Fit SVMs.
+        y_preds = []
+        y_trues = []
+        for task in all_task_features:
+            (x_train, y_train), (x_test, y_test) = task.splits
 
-        x_train = x_train - x_mean
-        x_train = l2_normalize(x_train)
+            x_mean = x_train.mean(axis=0, keepdims=True)
 
-        x_test = x_test - x_mean
-        x_test = l2_normalize(x_test)
+            x_train = x_train - x_mean
+            x_train = l2_normalize(x_train)
 
-        svc = init_svc(args.seed)
+            x_test = x_test - x_mean
+            x_test = l2_normalize(x_test)
 
-        svc.fit(x_train, y_train)
-        y_pred = svc.predict(x_test)
-        y_preds.append(y_pred)
-        y_trues.append(y_test)
-    
-    y_preds = np.concatenate(y_preds)
-    y_trues = np.concatenate(y_trues)
-    acc = np.mean(y_preds == y_trues)
-    logging.info(f"Accuracy: {acc:.4f}")
+            svc = init_svc(run_seed)
+
+            svc.fit(x_train, y_train)
+            y_pred = svc.predict(x_test)
+            y_preds.append(y_pred)
+            y_trues.append(y_test)
+
+        y_preds = np.concatenate(y_preds)
+        y_trues = np.concatenate(y_trues)
+        acc = np.mean(y_preds == y_trues)
+        logging.info("Run %d/%d Accuracy: %.4f", run + 1, num_runs, acc)
+        scores.append(acc)
+
+    scores = np.array(scores)
+    logging.info(
+        "Mean accuracy over %d runs: %.4f, std: %.4f",
+        num_runs,
+        np.mean(scores),
+        np.std(scores),
+    )

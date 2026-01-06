@@ -21,14 +21,21 @@ from scipy.stats import mode
 
 from .data import DatasetFromFile
 from .params import parse_args
-from .utils import init_device, random_seed
+from .utils import (
+    configure_logging,
+    configure_torch_backends,
+    get_dataloader,
+    init_device,
+    log_params,
+    normalize_force_image_size,
+    random_seed,
+)
 
 from ..open_clip import (
     create_model_and_transforms,
     get_cast_dtype,
     trace_model,
 )
-from ..training.logger import setup_logging
 from ..training.precision import get_autocast
 
 
@@ -48,25 +55,7 @@ def load_pickle(file):
         return pickle.load(f)
 
 
-def get_dataloader(dataset, batch_size, num_workers):
-    return torch.utils.data.DataLoader(
-        dataset,
-        batch_size=batch_size,
-        num_workers=num_workers,
-        sampler=None,
-    )
-
-def accuracy(output, target, topk=(1,)):
-    pred = output.topk(max(topk), 1, True, True)[1].t() #[batch_size, classes] -> [batch_size, 1] -> [1, batch_size], which class # topk = (values, indices)
-    correct = pred.eq(target.view(1, -1).expand_as(pred)) #shape: correct=targe.view=pred=[1, batch_size], True or False
-
-    return [
-        float(correct[:k].reshape(-1).float().sum(0, keepdim=True).cpu().numpy())
-        for k in topk
-    ]
-
-
-def run(model, dataloader, args):
+def run(model, dataloader, args, output_dir):
     autocast = get_autocast(args.precision)
     cast_dtype = get_cast_dtype(args.precision)
     with torch.no_grad():
@@ -84,13 +73,21 @@ def run(model, dataloader, args):
                 image_features = F.normalize(image_features, dim=-1)
                 feature_list.append(image_features.detach().cpu().numpy())
 
-        file = save_pickle(log_base_path,[np.vstack(feature_list), np.hstack(target_list), dataloader.dataset.samples,dataloader.dataset.class_to_idx])
+        file = save_pickle(
+            output_dir,
+            [
+                np.vstack(feature_list),
+                np.hstack(target_list),
+                dataloader.dataset.samples,
+                dataloader.dataset.class_to_idx,
+            ],
+        )
 
     return file
 
 
 
-def few_shot_eval(model, data, args):
+def few_shot_eval(model, data, args, output_dir):
     results = {}
 
     logging.info("Starting few-shot.")
@@ -98,7 +95,7 @@ def few_shot_eval(model, data, args):
     for split in data:
         logging.info("Building few-shot %s classifier.", split)
         
-        file = run(model, data[split], args)
+        file = run(model, data[split], args, output_dir)
         
         logging.info("Finished few-shot %s with total %d classes.", split, len(data[split].dataset.classes))
 
@@ -167,63 +164,17 @@ if __name__ == "__main__":
     args = parse_args(sys.argv[1:])
     random_seed(args.seed, 0)
 
-    if torch.cuda.is_available():
-        # This enables tf32 on Ampere GPUs which is only 8% slower than
-        # float16 and almost as accurate as float32
-        # This was a default in pytorch until 1.12
-        torch.backends.cuda.matmul.allow_tf32 = True
-        torch.backends.cudnn.benchmark = True
+    configure_torch_backends(deterministic=True)
 
     device = init_device(args)
 
-    args.save_logs = args.logs and args.logs.lower() != "none"
+    log_base_path = configure_logging(
+        args, "few_shot", include_workers=False, log_filename="out.log"
+    )
 
-    # get the name of the experiments
-    if args.save_logs and args.name is None:
-        # sanitize model name for filesystem/uri use
-        model_name_safe = args.model.replace("/", "-")
-        date_str = datetime.datetime.now().strftime("%Y_%m_%d-%H_%M_%S")
-        args.name = "-".join(
-            [
-                date_str,
-                f"model_{model_name_safe}",
-                f"b_{args.batch_size}",
-                f"p_{args.precision}",
-                "few_shot",
-            ]
-        )
-        
-    if args.save_logs is None:
-        args.log_path = None
-    else:
-        log_base_path = os.path.join(args.logs, args.name)
-        os.makedirs(log_base_path, exist_ok=True)
-        log_filename = "out.log"
-        args.log_path = os.path.join(log_base_path, log_filename)
+    normalize_force_image_size(args)
 
-    # Setup text logger
-    args.log_level = logging.DEBUG if args.debug else logging.INFO
-    setup_logging(args.log_path, args.log_level)
-
-    if (
-        isinstance(args.force_image_size, (tuple, list))
-        and len(args.force_image_size) == 1
-    ):
-        # arg is nargs, single (square) image size list -> int
-        args.force_image_size = args.force_image_size[0]
-
-    logging.info("Params:")
-    if args.save_logs is None:
-        for name in sorted(vars(args)):
-            val = getattr(args, name)
-            logging.info(f"  {name}: {val}")
-    else:
-        params_file = os.path.join(args.logs, args.name, "params.txt")
-        with open(params_file, "w") as f:
-            for name in sorted(vars(args)):
-                val = getattr(args, name)
-                logging.info(f"  {name}: {val}")
-                f.write(f"{name}: {val}\n")
+    log_params(args, log_base_path)
 
     if args.task_type == 'eval':
         feature_file = args.pretrained        
@@ -243,7 +194,6 @@ if __name__ == "__main__":
             image_std=args.image_std,
             aug_cfg=args.aug_cfg,
             output_dict=True,
-            load_weights_only=False,
         )
 
         if args.trace:
@@ -263,7 +213,8 @@ if __name__ == "__main__":
         start_time = time.monotonic()
                    
         model.eval()
-        _, feature_file = few_shot_eval(model, data, args)             
+        output_dir = log_base_path or os.getcwd()
+        _, feature_file = few_shot_eval(model, data, args, output_dir)             
 
         end_time = time.monotonic()
         logging.info(f"feature extraction takes: {datetime.timedelta(seconds=end_time - start_time)}")

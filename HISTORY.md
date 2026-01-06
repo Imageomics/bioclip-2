@@ -1,5 +1,6 @@
 ## BioCLIP 2
 
+* [commit b4e1960](https://github.com/Imageomics/bioclip-2/pull/18/commits/b4e19608f1800113c5d8b2d65ed545a1048ef129): code from [mlfoundations/open_clip](https://github.com/mlfoundations/open_clip), updates to [openCLIP 3.1.0](https://github.com/mlfoundations/open_clip/tree/8480ac990f0eda35fa21a0757188acebb11a36e6). 
 * Based on [openCLIP 2.29.0](https://github.com/mlfoundations/open_clip/tree/82d7496799688ea11772576b73c6b71fb7dcb986).
 * Trained on [TreeOfLife-200M](https://huggingface.co/datasets/imageomics/TreeOfLife-200M).
 * Includes part of the LAION-2B data for experience replay.

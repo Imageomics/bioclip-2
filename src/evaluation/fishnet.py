@@ -1,7 +1,6 @@
 import sys
 import logging
 import os.path
-import datetime
 import numpy as np
 import polars as pl
 from tqdm import tqdm
@@ -12,12 +11,18 @@ import torch.utils
 import torch.utils.data
 
 from .params import parse_args
-from .utils import init_device, random_seed
+from .utils import (
+    configure_logging,
+    configure_torch_backends,
+    init_device,
+    log_params,
+    normalize_force_image_size,
+    random_seed,
+)
 from ..open_clip import (
     create_model_and_transforms,
     trace_model,
 )
-from ..training.logger import setup_logging
 
 
 class Features(torch.utils.data.Dataset):
@@ -189,52 +194,15 @@ class ImageDataset(torch.utils.data.Dataset):
 if __name__ == "__main__":
     args = parse_args(sys.argv[1:])
 
-    if torch.cuda.is_available():
-        # This enables tf32 on Ampere GPUs which is only 8% slower than
-        # float16 and almost as accurate as float32
-        # This was a default in pytorch until 1.12
-        torch.backends.cuda.matmul.allow_tf32 = True
-        torch.backends.cudnn.benchmark = True
-        torch.backends.cudnn.deterministic = False
+    configure_torch_backends(deterministic=False)
 
     device = init_device(args)
 
-    args.save_logs = args.logs and args.logs.lower() != "none"
+    log_base_path = configure_logging(
+        args, "FishNet", include_workers=True, log_filename="out.log"
+    )
 
-    # get the name of the experiments
-    if args.save_logs and args.name is None:
-        # sanitize model name for filesystem/uri use
-        model_name_safe = args.model.replace("/", "-")
-        date_str = datetime.datetime.now().strftime("%Y_%m_%d-%H_%M_%S")
-        args.name = "-".join(
-            [
-                date_str,
-                f"model_{model_name_safe}",
-                f"b_{args.batch_size}",
-                f"j_{args.workers}",
-                f"p_{args.precision}",
-                "zero_shot_iid",
-            ]
-        )
-    if args.save_logs is None:
-        args.log_path = None
-    else:
-        log_base_path = os.path.join(args.logs, args.name)
-        args.log_path = None
-        os.makedirs(log_base_path, exist_ok=True)
-        log_filename = "out.log"
-        args.log_path = os.path.join(log_base_path, log_filename)
-
-    # Setup text logger
-    args.log_level = logging.DEBUG if args.debug else logging.INFO
-    setup_logging(args.log_path, args.log_level)
-
-    if (
-        isinstance(args.force_image_size, (tuple, list))
-        and len(args.force_image_size) == 1
-    ):
-        # arg is nargs, single (square) image size list -> int
-        args.force_image_size = args.force_image_size[0]
+    normalize_force_image_size(args)
 
     random_seed(args.seed, 0)
     model, preprocess_train, preprocess_val = create_model_and_transforms(
@@ -252,7 +220,6 @@ if __name__ == "__main__":
         image_std=args.image_std,
         aug_cfg=args.aug_cfg,
         output_dict=True,
-        load_weights_only=False,
     )
 
     random_seed(args.seed, args.rank)
@@ -262,55 +229,70 @@ if __name__ == "__main__":
 
     logging.info("Model:")
     logging.info(f"{str(model)}")
-    logging.info("Params:")
-    if  args.save_logs is None:
-        for name in sorted(vars(args)):
-            val = getattr(args, name)
-            logging.info(f"  {name}: {val}")
-    else:
-        params_file = os.path.join(args.logs, args.name, "params.txt")
-        with open(params_file, "w") as f:
-            for name in sorted(vars(args)):
-                val = getattr(args, name)
-                logging.info(f"  {name}: {val}")
-                f.write(f"{name}: {val}\n")
+    log_params(args, log_base_path)
 
     # 2. Get features.
     train_dataset = get_features(args, model, preprocess_val, is_train=True)
     test_dataset = get_features(args, model, preprocess_val, is_train=False)
 
-    # 3. Set up classifier.
-    classifier = init_classifier(train_dataset.dim).to(args.device)
+    scores = []
+    num_runs = 3
+    for run in range(num_runs):
+        random_seed(args.seed + run, args.rank)
 
-    # 4. Load datasets for classifier.
-    train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=args.batch_size, shuffle=True
+        # 3. Set up classifier.
+        classifier = init_classifier(train_dataset.dim).to(args.device)
+
+        # 4. Load datasets for classifier.
+        train_loader = torch.utils.data.DataLoader(
+            train_dataset, batch_size=args.batch_size, shuffle=True
+        )
+        test_loader = torch.utils.data.DataLoader(
+            test_dataset, batch_size=args.batch_size, shuffle=False
+        )
+        optimizer = torch.optim.Adam(classifier.parameters(), lr=args.lr)
+        criterion = torch.nn.BCEWithLogitsLoss()
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.5)
+
+        # 5. Fit the classifier.
+        for epoch in range(args.epochs):
+            total = 2 if args.debug else len(train_loader)
+            it = iter(train_loader)
+            for b in range(total):
+                features, labels, _ = next(it)
+                features = features.to(args.device)
+                labels = labels.to(args.device, dtype=torch.float)
+                output = classifier(features)
+                loss = criterion(output, labels)
+
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+
+            scheduler.step()
+
+            # Evaluate the classifier.
+            if (epoch + 1) % args.eval_every == 0:
+                score = evaluate(args, classifier, test_loader)
+                logging.info(
+                    "Run %d/%d Epoch %d/%d: %.3f",
+                    run + 1,
+                    num_runs,
+                    epoch + 1,
+                    args.epochs,
+                    score,
+                )
+
+        final_score = evaluate(args, classifier, test_loader)
+        logging.info(
+            "Run %d/%d final score: %.3f", run + 1, num_runs, final_score
+        )
+        scores.append(final_score)
+
+    scores = np.array(scores)
+    logging.info(
+        "Mean score over %d runs: %.3f, std: %.3f",
+        num_runs,
+        np.mean(scores),
+        np.std(scores),
     )
-    test_loader = torch.utils.data.DataLoader(
-        test_dataset, batch_size=args.batch_size, shuffle=False
-    )
-    optimizer = torch.optim.Adam(classifier.parameters(), lr=args.lr)
-    criterion = torch.nn.BCEWithLogitsLoss()
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.5)
-
-    # 5. Fit the classifier.
-    for epoch in range(args.epochs):
-        total = 2 if args.debug else len(train_loader)
-        it = iter(train_loader)
-        for b in range(total):
-            features, labels, _ = next(it)
-            features = features.to(args.device)
-            labels = labels.to(args.device, dtype=torch.float)
-            output = classifier(features)
-            loss = criterion(output, labels)
-
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-
-        scheduler.step()
-
-        # Evaluate the classifier.
-        if (epoch + 1) % args.eval_every == 0:
-            score = evaluate(args, classifier, test_loader)
-            logging.info(f"Epoch {epoch + 1}/{args.epochs}: {score:.3f}")

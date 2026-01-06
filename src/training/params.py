@@ -108,7 +108,13 @@ def parse_args(args):
         help="Path to imagenet v2 for conducting zero shot evaluation.",
     )
     parser.add_argument(
-        "--logs",
+        "--cache-dir",
+        type=str,
+        default=None,
+        help="Override system default cache path for model & tokenizer file downloads.",
+    )
+    parser.add_argument(
+        "--logs-dir",
         type=str,
         default="../storage/model",
         help="Where to store tensorboard logs. Use None to avoid storing logs.",
@@ -146,8 +152,13 @@ def parse_args(args):
     parser.add_argument("--beta2", type=float, default=None, help="Adam beta 2.")
     parser.add_argument("--eps", type=float, default=None, help="Adam epsilon.")
     parser.add_argument("--wd", type=float, default=0.2, help="Weight decay.")
+    parser.add_argument("--momentum", type=float, default=None, help="Momentum (for timm optimizers).")
     parser.add_argument(
         "--warmup", type=int, default=1000, help="Number of steps to warmup for."
+    )
+    parser.add_argument(
+        "--opt", type=str, default='adamw',
+        help="Which optimizer to use. Choices are ['adamw', or any timm optimizer 'timm/{opt_name}']."
     )
     parser.add_argument(
         "--use-bn-sync",
@@ -197,7 +208,7 @@ def parse_args(args):
     )
     parser.add_argument(
         "--precision",
-        choices=["amp", "amp_bf16", "amp_bfloat16", "bf16", "fp16", "fp32"],
+        choices=["amp", "amp_bf16", "amp_bfloat16", "bf16", "fp16", "pure_bf16", "pure_fp16", "fp32"],
         default="amp",
         help="Floating point precision."
     )
@@ -209,7 +220,7 @@ def parse_args(args):
     )
     parser.add_argument(
         "--pretrained",
-        default=None,
+        default='',
         type=str,
         help="Use a pretrained CLIP model weights with the specified tag or file path.",
     )
@@ -243,6 +254,16 @@ def parse_args(args):
     parser.add_argument(
         '--image-std', type=float, nargs='+', default=[0.229, 0.224, 0.225], metavar='STD',
         help='Override default image std deviation of of dataset')
+    parser.add_argument(
+        '--image-interpolation',
+        default=None, type=str, choices=['bicubic', 'bilinear', 'random'],
+        help="Override default image resize interpolation"
+    )
+    parser.add_argument(
+        '--image-resize-mode',
+        default=None, type=str, choices=['shortest', 'longest', 'squash'],
+        help="Override default image resize (& crop) mode during inference"
+    )
     parser.add_argument('--aug-cfg', nargs='*', default={}, action=ParseKwargs)
     parser.add_argument(
         "--grad-checkpointing",
@@ -261,6 +282,10 @@ def parse_args(args):
         default=False,
         action="store_true",
         help="enable full distributed gradient for feature gather"
+    )
+    parser.add_argument(
+        '--force-context-length', type=int, default=None,
+        help='Override default context length'
     )
     parser.add_argument(
         '--force-image-size', type=int, nargs='+', default=None,
@@ -291,6 +316,12 @@ def parse_args(args):
         help="torch.jit.script the model, also uses jit version of OpenAI models if pretrained=='openai'",
     )
     parser.add_argument(
+        "--torchcompile",
+        default=False,
+        action='store_true',
+        help="torch.compile() the model, requires pytorch 2.0 or later.",
+    )
+    parser.add_argument(
         "--trace",
         default=False,
         action='store_true',
@@ -298,6 +329,9 @@ def parse_args(args):
     )
     parser.add_argument(
         "--accum-freq", type=int, default=1, help="Update the model every --acum-freq steps."
+    )
+    parser.add_argument(
+        "--device", default="cuda", type=str, help="Accelerator to use."
     )
     # arguments for distributed training
     parser.add_argument(
@@ -307,11 +341,14 @@ def parse_args(args):
         help="url used to set up distributed training",
     )
     parser.add_argument(
-        "--dist-backend", default="nccl", type=str, help="distributed backend"
+        "--dist-backend",
+        default='nccl',
+        type=str,
+        help="distributed backend. \"nccl\" for GPU, \"hccl\" for Ascend NPU"
     )
     parser.add_argument(
         "--report-to",
-        default='tensorboard',
+        default='',
         type=str,
         help="Options are ['wandb', 'tensorboard', 'wandb,tensorboard']"
     )
@@ -373,13 +410,13 @@ def parse_args(args):
         "--lock-text-unlocked-layers",
         type=int,
         default=0,
-        help="Leave last n image tower layer groups unlocked.",
+        help="Leave last n text tower layer groups unlocked.",
     )
     parser.add_argument(
         "--lock-text-freeze-layer-norm",
         default=False,
         action='store_true',
-        help="Freeze BatchNorm running stats in image tower for any locked layers.",
+        help="Freeze LayerNorm running stats in text tower for any locked layers.",
     )
     parser.add_argument(
         "--log-every-n-steps",
@@ -434,6 +471,12 @@ def parse_args(args):
         help='Which pre-trained weights to distill from, if any.'
     )
     parser.add_argument(
+        "--use-bnb-linear",
+        default=None,
+        help='Replace the network linear layers from the bitsandbytes library. '
+        'Allows int8 training/inference, etc.'
+    )
+    parser.add_argument(
         "--siglip",
         default=False,
         action="store_true",
@@ -459,10 +502,11 @@ def parse_args(args):
     )
     args = parser.parse_args(args)
 
-    # If some params are not passed, we use the default values based on model name.
-    default_params = get_default_params(args.model)
-    for name, val in default_params.items():
-        if getattr(args, name) is None:
-            setattr(args, name, val)
+    if 'timm' not in args.opt:
+        # set default opt params based on model name (only if timm optimizer not used)
+        default_params = get_default_params(args.model)
+        for name, val in default_params.items():
+            if getattr(args, name) is None:
+                setattr(args, name, val)
 
     return args
