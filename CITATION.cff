@@ -31,15 +31,15 @@ authors:
   - family-names: Mai
     given-names: Zheda
 cff-version: 1.2.0
-date-released: "2025-09-03"
+date-released: "2026-01-26"
 identifiers:
   - doi: "10.5281/zenodo.15644363"
-  - description: "The GitHub release URL of tag v1.0.1."
+  - description: "The GitHub release URL of tag v2.0.0."
     type: url
-    value: "https://github.com/Imageomics/bioclip-2/releases/tag/v1.0.1"
-  - description: "The GitHub URL of the commit tagged with v1.0.1."
+    value: "https://github.com/Imageomics/bioclip-2/releases/tag/v2.0.0"
+  - description: "The GitHub URL of the commit tagged with v2.0.0."
     type: url
-    value: "https://github.com/Imageomics/bioclip-2/tree/92bf5e1f74e40df91a02c4dd6cad63b3396c94cf"
+    value: "https://github.com/Imageomics/bioclip-2/tree/<commit-hash>" # Update on release
 keywords:
   - clip
   - biology
@@ -58,7 +58,7 @@ license: MIT
 message: "If you use this software, please cite both the article and the software itself."
 repository-code: "https://github.com/Imageomics/bioclip-2"
 title: "BioCLIP 2"
-version: 1.0.1
+version: 2.0.0
 type: software
 references:
   - authors:
