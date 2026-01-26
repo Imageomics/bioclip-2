@@ -95,9 +95,9 @@ Our code (this repository):
   author = {Jianyang Gu and Samuel Stevens and Elizabeth G. Campolongo and Matthew J. Thompson and Net Zhang and Jiaman Wu and Zheda Mai},
   doi = {10.5281/zenodo.15644363},
   title = {{B}io{CLIP} 2},
-  version = {1.0.1},
-  month = {sep},
-  year = {2025}
+  version = {2.0.0},
+  month = {jan},
+  year = {2026}
 }
 ```
 

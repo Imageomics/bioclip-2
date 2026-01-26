@@ -33,13 +33,12 @@ authors:
 cff-version: 1.2.0
 date-released: "2026-01-26"
 identifiers:
-  - doi: "10.5281/zenodo.15644363"
   - description: "The GitHub release URL of tag v2.0.0."
     type: url
     value: "https://github.com/Imageomics/bioclip-2/releases/tag/v2.0.0"
   - description: "The GitHub URL of the commit tagged with v2.0.0."
     type: url
-    value: "https://github.com/Imageomics/bioclip-2/tree/<commit-hash>" # Update on release
+    value: "https://github.com/Imageomics/bioclip-2/tree/821063d4fb0594baadf65e65e8c59d2c8476fec9"
 keywords:
   - clip
   - biology
@@ -59,6 +58,7 @@ message: "If you use this software, please cite both the article and the softwar
 repository-code: "https://github.com/Imageomics/bioclip-2"
 title: "BioCLIP 2"
 version: 2.0.0
+doi: "10.5281/zenodo.15644363"
 type: software
 references:
   - authors:
