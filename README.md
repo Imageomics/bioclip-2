@@ -9,6 +9,12 @@ BioCLIP 2 is trained on the [TreeOfLife-200M dataset](https://huggingface.co/dat
 BioCLIP 2 is a CLIP model trained on a new 200M-image dataset of biological organisms with fine-grained taxonomic labels.
 BioCLIP 2 outperforms general domain baselines on a wide spread of biology-related tasks, including zero-shot and few-shot classification.
 
+## 📰 News and Updates
+
+- 💖 **February 2026:** [BioCLIP 2.5 Huge](https://huggingface.co/imageomics/bioclip-2.5-vith14) is released for Love Data Week! The latest model, based on the [OpenCLIP ViT-H/14 checkpoint](https://huggingface.co/laion/CLIP-ViT-H-14-laion2B-s32B-b79K), used the accelerated training code from [v2.0.0](https://github.com/Imageomics/bioclip-2/releases/tag/v2.0.0) and the updated [TreeOfLife-200M](https://huggingface.co/datasets/imageomics/TreeOfLife-200M) dataset (19M more images and some additional content-based filtering).
+- 🔗 **July 2025:** BioCLIP 2 is set as the default model for [pybioclip](https://github.com/Imageomics/pybioclip), with full prediction and text embedding support.
+- 🚀 **June 2025:** [BioCLIP 2](https://huggingface.co/imageomics/bioclip-2) is released! Trained on the [TreeOfLife-200M dataset](https://huggingface.co/datasets/imageomics/TreeOfLife-200M) (Revision [a8f38b4](http://huggingface.co/datasets/imageomics/TreeOfLife-200M/tree/a8f38b4388579862c56ae57d6f094c2ac0e92e12)), BioCLIP 2 demonstrates emergent properties beyond species classification after extensive hierarchical contrastive training.
+
 ## Table of Contents
 
 1. [Model](#model)
