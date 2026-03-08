@@ -19,6 +19,7 @@ from training.logger import setup_logging
 
 from .params import parse_args
 from .utils import init_device, random_seed, save_json
+from ..training.precision import get_autocast
 
 
 class ImageFolderWithPaths(ImageFolder):
@@ -28,15 +29,16 @@ class ImageFolderWithPaths(ImageFolder):
         return (img, label, path)
 
 
-def extract_image_features(model, dloader, device, class_embeddings=None):
+def extract_image_features(model, dloader, device, autocast, class_embeddings=None):
     feats = None
     lbls = None
     all_paths = []
     for img, lbl, paths in tqdm(dloader, desc="Extracting Features"):
         img = img.to(device)
         lbl = lbl.cpu().detach().numpy()
-        f = model.encode_image(img)
-        f = F.normalize(f, dim=-1)
+        with autocast():
+            f = model.encode_image(img)
+            f = F.normalize(f, dim=-1)
         if class_embeddings is not None:
             f = 100.0 * f @ class_embeddings
         f = f.cpu().detach().numpy()
@@ -164,9 +166,10 @@ if __name__ == "__main__":
     # logging
     args.save_logs = args.logs and args.logs.lower() != "none"
 
+    autocast = get_autocast(args.precision, device_type=device.type)
     with torch.no_grad():
         features, lbls, all_paths = extract_image_features(
-            model, dloader, device, class_embeddings=None
+            model, dloader, device, autocast, class_embeddings=None
         )
 
     np.save(data_save_path, features)

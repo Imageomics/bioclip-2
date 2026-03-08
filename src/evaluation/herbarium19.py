@@ -40,7 +40,9 @@ from .utils import (
 from ..open_clip import (
     create_model_and_transforms,
     trace_model,
+    get_cast_dtype,
 )
+from ..training.precision import get_autocast
 
 
 def cluster_acc(y_true, y_pred):
@@ -242,6 +244,8 @@ def get_features(
     )
 
     all_features, all_labels, all_ids, all_masks, all_masks_cls = [], [], [], [], []
+    autocast = get_autocast(args.precision)
+    cast_dtype = get_cast_dtype(args.precision)
 
     total = len(dataloader) if not args.debug else 2
     it = iter(dataloader)
@@ -250,8 +254,12 @@ def get_features(
         images, labels, ids, masks = next(it)
         images = images.to(args.device)
 
-        with torch.no_grad():
+        if cast_dtype is not None:
+            images = images.to(dtype=cast_dtype)
+
+        with torch.no_grad() and autocast():
             features, _ = backbone.encode_image(images)
+            features = torch.nn.functional.normalize(features, dim=-1)
 
         all_features.append(features)
         all_labels.extend(labels)

@@ -43,7 +43,9 @@ from .utils import (
 from ..open_clip import (
     create_model_and_transforms,
     trace_model,
+    get_cast_dtype,
 )
+from ..training.precision import get_autocast
 
 
 class Dataset(torch.utils.data.Dataset):
@@ -122,15 +124,20 @@ def get_all_task_specific_features(args, backbone, img_transform):
     )
 
     all_features, all_ids = [], []
+    autocast = get_autocast(args.precision)
+    cast_dtype = get_cast_dtype(args.precision)
 
     total = len(dataloader) if not args.debug else 2
     it = iter(dataloader)
     for b in tqdm(range(total)):
         ids, images = next(it)
         images = images.to(args.device)
+        if cast_dtype is not None:
+            images = images.to(dtype=cast_dtype)
 
-        features, _ = backbone.encode_image(images)
-        features = torch.nn.functional.normalize(features, dim=-1)
+        with autocast():
+            features, _ = backbone.encode_image(images)
+            features = torch.nn.functional.normalize(features, dim=-1)
         all_features.append(features.cpu())
 
         all_ids.extend(ids)

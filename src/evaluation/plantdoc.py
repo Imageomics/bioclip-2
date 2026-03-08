@@ -20,7 +20,9 @@ from .simpleshot import simpleshot
 from ..open_clip import (
     create_model_and_transforms,
     trace_model,
+    get_cast_dtype,
 )
+from ..training.precision import get_autocast
 
 
 class Features(torch.utils.data.Dataset):
@@ -102,6 +104,8 @@ def get_features(
     )
 
     all_features, all_labels, all_ids = [], [], []
+    autocast = get_autocast(args.precision)
+    cast_dtype = get_cast_dtype(args.precision)
 
     total = len(dataloader) if not args.debug else 2
     it = iter(dataloader)
@@ -109,9 +113,12 @@ def get_features(
     for b in tqdm(range(total)):
         ids, images, labels = next(it)
         images = images.to(args.device)
+        if cast_dtype is not None:
+            images = images.to(dtype=cast_dtype)
 
-        with torch.amp.autocast("cuda"):
+        with autocast():
             features, _ = backbone.encode_image(images)
+            features = torch.nn.functional.normalize(features, dim=-1)
 
         all_features.append(features.cpu())
         all_labels.extend(labels)
@@ -206,6 +213,9 @@ if __name__ == "__main__":
 
     all_scores = []
     for r in range(args.n_repeats):
+        run_seed = args.seed + r
+        random_seed(run_seed, args.rank)
+
         i = choose_k_per_class(train_features.y, k=1)
 
         scores = simpleshot(

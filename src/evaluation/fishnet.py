@@ -22,7 +22,9 @@ from .utils import (
 from ..open_clip import (
     create_model_and_transforms,
     trace_model,
+    get_cast_dtype,
 )
+from ..training.precision import get_autocast
 
 
 class Features(torch.utils.data.Dataset):
@@ -74,12 +76,13 @@ def evaluate(
     total = 2 if args.debug else len(dataloader)
     it = iter(dataloader)
     y_pred, y_true = [], []
+    auto_cast = get_autocast(args.precision)
     for b in range(total):
         features, labels, ids = next(it)
         features = features.to(args.device)
         labels = labels.numpy()
         ids = ids.numpy()
-        with torch.no_grad():
+        with torch.no_grad() and auto_cast():
             pred_logits = classifier(features)
         pred_logits = (pred_logits > 0.5).cpu().numpy()
         y_pred.append(pred_logits)
@@ -106,6 +109,8 @@ def get_features(
     )
 
     all_features, all_labels, all_ids = [], [], []
+    autocast = get_autocast(args.precision)
+    cast_dtype = get_cast_dtype(args.precision)
 
     total = 2 if args.debug else len(dataloader)
     it = iter(dataloader)
@@ -113,7 +118,12 @@ def get_features(
         images, labels, _ = next(it)
         images = images.to(args.device)
 
-        features, _ = backbone.encode_image(images)
+        if cast_dtype is not None:
+            images = images.to(dtype=cast_dtype)
+
+        with autocast():
+            features, _ = backbone.encode_image(images)
+
         all_features.append(features.cpu())
         all_labels.append(labels)
 
@@ -237,6 +247,7 @@ if __name__ == "__main__":
 
     scores = []
     num_runs = 3
+    auto_cast = get_autocast(args.precision)
     for run in range(num_runs):
         random_seed(args.seed + run, args.rank)
 
@@ -262,7 +273,8 @@ if __name__ == "__main__":
                 features, labels, _ = next(it)
                 features = features.to(args.device)
                 labels = labels.to(args.device, dtype=torch.float)
-                output = classifier(features)
+                with auto_cast():
+                    output = classifier(features)
                 loss = criterion(output, labels)
 
                 optimizer.zero_grad()

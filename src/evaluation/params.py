@@ -36,6 +36,20 @@ def parse_args(args):
         help="retrieve: retrieve image embeddings from image encoder; eval: evaluate with pickle file containing image embeddings; all: evaluate from scratch which both retrieve image embeddings and evaluate the embeddings in one run.",
     )
     parser.add_argument(
+        "--feature-file",
+        type=str,
+        default=None,
+        help="Path to a pickle file containing extracted image embeddings for eval-only runs.",
+    )
+    parser.add_argument(
+        "--classification-tasks",
+        type=str,
+        nargs="+",
+        choices=["zero_shot", "few_shot"],
+        default=["zero_shot", "few_shot"],
+        help="Which classification evaluators to run from the shared image features.",
+    )
+    parser.add_argument(
         "--nfold",
         type=int,
         default=5,
@@ -74,7 +88,7 @@ def parse_args(args):
     )
     parser.add_argument(
         "--precision",
-        choices=["amp", "amp_bf16", "amp_bfloat16", "bf16", "fp32"],
+        choices=["amp", "amp_bf16", "amp_bfloat16", "bf16", "fp16", "pure_bf16", "pure_fp16", "fp32"],
         default="amp",
         help="Floating point precision.",
     )
