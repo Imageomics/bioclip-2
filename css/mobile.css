@@ -134,6 +134,33 @@ pre.reference {
   background-color: var(--nice-gray);
 }
 
+.highlight-panel {
+  margin: 1.5rem 0 1.75rem;
+  padding: 1rem 1.1rem;
+  border: 1px solid #d7ddc6;
+  border-radius: 16px;
+  background: linear-gradient(135deg, #f6f8ef 0%, #edf2df 100%);
+}
+
+.highlight-panel > h2 {
+  margin: 0.15em 0;
+  text-align: center;
+}
+
+.highlight-panel > p {
+  margin: 0.6em 0;
+}
+
+.eyebrow {
+  margin: 0;
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #5f6b2f;
+}
+
 
 /***************
   Figures
