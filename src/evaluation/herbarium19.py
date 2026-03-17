@@ -257,7 +257,7 @@ def get_features(
         if cast_dtype is not None:
             images = images.to(dtype=cast_dtype)
 
-        with torch.no_grad() and autocast():
+        with torch.no_grad(), autocast():
             features, _ = backbone.encode_image(images)
             features = torch.nn.functional.normalize(features, dim=-1)
 

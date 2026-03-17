@@ -82,7 +82,7 @@ def evaluate(
         features = features.to(args.device)
         labels = labels.numpy()
         ids = ids.numpy()
-        with torch.no_grad() and auto_cast():
+        with torch.no_grad(), auto_cast():
             pred_logits = classifier(features)
         pred_logits = (pred_logits > 0.5).cpu().numpy()
         y_pred.append(pred_logits)
