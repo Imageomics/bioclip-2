@@ -3,6 +3,8 @@
  - `label_filename`: File path of the CSV annotation file under the base folder in `data_root`
  - `text_type`: Text type of annotations for test examples. String, default `asis`.
  - `task_type`: retrieve: retrieve image embeddings from image encoder; eval: evaluate with pickle file containing image embeddings; all: evaluate from scratch which both retrieve image embeddings and evaluate the embeddings in one run. String, options: "retrieve", "eval", "all", default `all`.
+ - `feature-file`: Optional pickle file with cached image embeddings for eval-only runs with `classification.py`.
+ - `classification-tasks`: Which classification evaluators to run from the shared image features. Options: `zero_shot`, `few_shot`. Default runs both.
  - `nfold`: The number of times of sampling training examples during few-shot. `int`, default 5.
  - `kshot_list`: A list of integers for k in k-shot. Default [1,5].
  - `data_root`: File path of base folder which contains images and a CSV annotation file. String, default ''.
@@ -29,3 +31,7 @@
  - `n_repeats`: Number of times to repeat for simpleshot. Default is 5.
  - `eval_every`: Set n: Evaluate every n epochs and log evaluation. Default is 10.
  - `seed`: Default random seed, defaults to 0.
+
+## Combined classification
+
+Use `python -m src.evaluation.classification` to run zero-shot and few-shot evaluation from a single image feature extraction pass.

@@ -36,23 +36,16 @@ for i in "${!DATA_ROOTS[@]}"; do
     DATA_ROOT=${DATA_ROOTS[$i]}
     LABEL_FILE=${LABEL_FILES[$i]}
 
-    python -m src.evaluation.zero_shot_iid \
+    python -m src.evaluation.classification \
             --model $MODEL_TYPE \
             --batch-size 256 \
             --data_root $DATA_ROOT \
             --pretrained $PRETRAINED \
             --label_filename $LABEL_FILE \
-            --log $LOG_FILEPATH \
+            --logs $LOG_FILEPATH \
             --text_type $TEXT_TYPE \
-
-    python -m src.evaluation.few_shot \
-            --model $MODEL_TYPE \
-            --batch-size 256 \
-            --data_root $DATA_ROOT \
-            --pretrained $PRETRAINED \
-            --label_filename $LABEL_FILE \
-            --log $LOG_FILEPATH \
             --task_type $TASK_TYPE \
+            --classification-tasks zero_shot few_shot \
             --nfold 5 \
             --kshot_list 1 5 \
 
@@ -85,23 +78,16 @@ for i in "${!DATA_ROOTS[@]}"; do
     DATA_ROOT=${DATA_ROOTS[$i]}
     LABEL_FILE=${LABEL_FILES[$i]}
 
-    python -m src.evaluation.zero_shot_iid \
+    python -m src.evaluation.classification \
             --model $MODEL_TYPE \
             --batch-size 256 \
             --data_root $DATA_ROOT \
             --pretrained $PRETRAINED \
             --label_filename $LABEL_FILE \
-            --log $LOG_FILEPATH \
+            --logs $LOG_FILEPATH \
             --text_type $TEXT_TYPE \
-
-    python -m src.evaluation.few_shot \
-            --model $MODEL_TYPE \
-            --batch-size 256 \
-            --data_root $DATA_ROOT \
-            --pretrained $PRETRAINED \
-            --label_filename $LABEL_FILE \
-            --log $LOG_FILEPATH \
             --task_type $TASK_TYPE \
+            --classification-tasks zero_shot few_shot \
             --nfold 5 \
             --kshot_list 1 5 \
 
@@ -112,22 +98,15 @@ TEXT_TYPE="taxon_com"
 DATA_ROOT="[test-set-dir]/rare-species/"
 LABEL_FILE="[test-set-dir]/rare-species/metadata.csv"
 
-python -m src.evaluation.zero_shot_iid \
+python -m src.evaluation.classification \
         --model $MODEL_TYPE \
         --batch-size 256 \
         --data_root $DATA_ROOT \
         --pretrained $PRETRAINED \
         --label_filename $LABEL_FILE \
-        --log $LOG_FILEPATH \
+        --logs $LOG_FILEPATH \
         --text_type $TEXT_TYPE \
-
-python -m src.evaluation.few_shot \
-        --model $MODEL_TYPE \
-        --batch-size 256 \
-        --data_root $DATA_ROOT \
-        --pretrained $PRETRAINED \
-        --label_filename $LABEL_FILE \
-        --log $LOG_FILEPATH \
         --task_type $TASK_TYPE \
+        --classification-tasks zero_shot few_shot \
         --nfold 5 \
         --kshot_list 1 5 \
