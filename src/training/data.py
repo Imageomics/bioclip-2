@@ -7,7 +7,9 @@ import random
 import sys
 import braceexpand
 from dataclasses import dataclass
+from functools import partial
 from multiprocessing import Value
+from typing import Any, Callable
 
 import numpy as np
 import pandas as pd
@@ -63,6 +65,10 @@ class DataInfo:
     dataloader: DataLoader
     sampler: DistributedSampler = None
     shared_epoch: SharedEpoch = None
+    preprocess_fn: Callable = None
+    tokenizer: Any = None
+    raw: bool = False
+    taxonomy_hierarchy: bool = False
 
     def set_epoch(self, epoch):
         if self.shared_epoch is not None:
@@ -171,7 +177,13 @@ def get_imagenet(args, preprocess_fns, split):
 def count_samples(dataloader):
     os.environ["WDS_EPOCH"] = "0"
     n_elements, n_batches = 0, 0
-    for images, texts in dataloader:
+    for batch in dataloader:
+        if isinstance(batch, (tuple, list)):
+            if len(batch) < 2:
+                continue
+            images, texts = batch[0], batch[1]
+        else:
+            images, texts = batch
         n_batches += 1
         n_elements += len(images)
         assert len(images) == len(texts)
@@ -182,6 +194,85 @@ def filter_no_caption_or_no_image(sample):
     has_caption = any('txt' in key for key in sample)
     has_image = ('png' in sample or 'jpg' in sample or 'jpeg' in sample or 'webp' in sample)
     return has_caption and has_image
+
+
+def _coerce_text_value(text_value):
+    if isinstance(text_value, bytes):
+        return text_value.decode('utf-8', errors='ignore')
+    return str(text_value)
+
+
+def extract_taxonomy_labels(text_value, prefix="a photo of "):
+    if isinstance(text_value, (list, tuple)):
+        if not text_value:
+            return None
+        text_value = text_value[0]
+    if text_value is None:
+        return None
+    text = _coerce_text_value(text_value).strip()
+    if not text:
+        return None
+    prefix_len = len(prefix)
+    if text[:prefix_len].lower() != prefix.lower():
+        return None
+    label_str = text[prefix_len:].strip().rstrip('.')
+    if not label_str:
+        return None
+    labels = [token for token in label_str.split() if token]
+    return labels or None
+
+
+def filter_caption_label_count(sample, text_key='text', label_count=7):
+    text_value = sample.get(text_key)
+    if text_value is None:
+        return False
+    labels = extract_taxonomy_labels(text_value)
+    if labels is None:
+        return False
+    return len(labels) == label_count
+
+
+def add_taxonomy_hierarchy(sample, text_key='text', output_key='taxonomy_levels', output_prefix='an image of '):
+    text_value = sample.get(text_key)
+    if text_value is None:
+        return sample
+    labels = extract_taxonomy_labels(text_value)
+    if not labels:
+        return sample
+    running = []
+    hierarchy = []
+    for label in labels:
+        running.append(label)
+        hierarchy.append(f"{output_prefix}{' '.join(running)}")
+    sample[output_key] = hierarchy
+    return sample
+
+
+def load_taxonomy_levels(sample, key="taxonomy_levels", output_key="taxonomy_levels"):
+    value = sample.get(key)
+    if value is None:
+        return sample
+    if isinstance(value, bytes):
+        try:
+            value = value.decode("utf-8")
+        except Exception:
+            return sample
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return sample
+    if isinstance(value, (list, tuple)):
+        sample[output_key] = list(value)
+    return sample
+
+
+def ensure_taxonomy_levels(sample, fallback_key=None, output_key="taxonomy_levels"):
+    if output_key in sample:
+        return sample
+    if fallback_key and fallback_key in sample:
+        sample[output_key] = sample[fallback_key]
+    return sample
 
 
 def log_and_continue(exn):
@@ -341,6 +432,7 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
         input_shards = args.val_data
     assert input_shards is not None
     resampled = getattr(args, 'dataset_resampled', False) and is_train
+    raw_samples = getattr(args, 'dataloader_raw', False)
 
     num_samples, num_shards = get_dataset_size(input_shards)
     if not num_samples:
@@ -401,33 +493,81 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
         ])
     text_type = args.continual_text_type if is_continual else args.text_type
     batch_size = args.continual_batch_size if is_continual else args.batch_size
+    text_filter_key = None
+    use_taxonomy_hierarchy = getattr(args, "taxonomy_hierarchy", False)
+    use_precomputed_levels = getattr(args, "precomputed_taxonomy_levels", False)
+    taxonomy_levels_key = getattr(args, "taxonomy_levels_key", None)
+    if text_type == "level":
+        use_precomputed_levels = False
+        taxonomy_levels_key = None
     if text_type == 'random':
-        pipeline.extend([
-            wds.select(filter_no_caption_or_no_image),
-            wds.decode("pilrgb", handler=log_and_continue),
-            wds.rename(image="jpg;png;jpeg;webp",sci="sci.txt", com="com.txt",taxon="taxon.txt", sci_com="sci_com.txt", taxon_com = "taxon_com.txt"),
-            wds.map_dict(image=preprocess_img, sci=lambda sci: tokenizer(sci)[0], com=lambda com: tokenizer(com)[0], taxon=lambda taxon: tokenizer(taxon)[0], sci_com=lambda sci_com: tokenizer(sci_com)[0], taxon_com=lambda taxon_com: tokenizer(taxon_com)[0]),
-            wds.to_tuple("image", "sci", "com", "taxon", "sci_com", "taxon_com"),
-            wds.batched(batch_size, partial=not is_train)
-        ])
-    elif text_type == '':
-        pipeline.extend([
-            wds.select(filter_no_caption_or_no_image),
-            wds.decode("pilrgb", handler=log_and_continue),
-            wds.rename(image="jpg;png;jpeg;webp", text='txt'),
-            wds.map_dict(image=preprocess_img, text=lambda text: tokenizer(text)[0]),
-            wds.to_tuple("image", "text"),
-            wds.batched(batch_size, partial=not is_train)
-        ])
+        rename_kwargs = dict(
+            image="jpg;png;jpeg;webp",
+            sci="sci.txt",
+            com="com.txt",
+            taxon="taxon.txt",
+            sci_com="sci_com.txt",
+            taxon_com="taxon_com.txt",
+        )
+        map_dict_kwargs = dict(
+            image=preprocess_img,
+            sci=lambda sci: tokenizer(sci)[0],
+            com=lambda com: tokenizer(com)[0],
+            taxon=lambda taxon: tokenizer(taxon)[0],
+            sci_com=lambda sci_com: tokenizer(sci_com)[0],
+            taxon_com=lambda taxon_com: tokenizer(taxon_com)[0],
+        )
+        tuple_keys = ("image", "sci", "com", "taxon", "sci_com", "taxon_com")
     else:
-        pipeline.extend([
-            wds.select(filter_no_caption_or_no_image),
-            wds.decode("pilrgb", handler=log_and_continue),
-            wds.rename(image="jpg;png;jpeg;webp", text=text_type+'.txt'),
-            wds.map_dict(image=preprocess_img, text=lambda text: tokenizer(text)[0]),
-            wds.to_tuple("image", "text"),
-            wds.batched(batch_size, partial=not is_train)
-        ])
+        rename_kwargs = dict(image="jpg;png;jpeg;webp")
+        if text_type == '':
+            rename_kwargs['text'] = 'txt'
+        elif text_type == 'level':
+            rename_kwargs['text'] = 'taxonomy_levels.txt'
+        else:
+            rename_kwargs['text'] = text_type + '.txt'
+        map_dict_kwargs = dict(
+            image=preprocess_img,
+            text=lambda text: tokenizer(text)[0],
+        )
+        tuple_keys = ("image", "text")
+        text_filter_key = "text"
+
+    if use_taxonomy_hierarchy and use_precomputed_levels and taxonomy_levels_key:
+        rename_kwargs["taxonomy_levels"] = taxonomy_levels_key
+
+    pipeline.extend([
+        wds.select(filter_no_caption_or_no_image),
+        wds.decode("pilrgb", handler=log_and_continue),
+        wds.rename(**rename_kwargs),
+    ])
+
+    label_count = getattr(args, 'taxonomy_label_count', None)
+    if label_count is not None and text_filter_key is not None:
+        taxonomy_filter = partial(
+            filter_caption_label_count,
+            text_key=text_filter_key,
+            label_count=label_count,
+        )
+        pipeline.append(wds.select(taxonomy_filter))
+
+    if use_taxonomy_hierarchy and not use_precomputed_levels and text_filter_key is not None:
+        pipeline.append(wds.map(partial(add_taxonomy_hierarchy, text_key=text_filter_key)))
+
+    if use_taxonomy_hierarchy and use_precomputed_levels and taxonomy_levels_key:
+        pipeline.append(wds.map(partial(ensure_taxonomy_levels, fallback_key=taxonomy_levels_key)))
+        pipeline.append(wds.map(partial(load_taxonomy_levels, key="taxonomy_levels")))
+
+    if use_taxonomy_hierarchy and raw_samples and text_filter_key is not None and text_type != "level":
+        tuple_keys = tuple_keys + ("taxonomy_levels",)
+
+    if not raw_samples:
+        pipeline.append(wds.map_dict(**map_dict_kwargs))
+
+    pipeline.extend([
+        wds.to_tuple(*tuple_keys),
+        wds.batched(batch_size, partial=not is_train)
+    ])
 
 
     dataset = wds.DataPipeline(*pipeline)
@@ -475,7 +615,14 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
     dataloader.num_batches = num_batches
     dataloader.num_samples = num_samples
 
-    return DataInfo(dataloader=dataloader, shared_epoch=shared_epoch)
+    return DataInfo(
+        dataloader=dataloader,
+        shared_epoch=shared_epoch,
+        preprocess_fn=preprocess_img,
+        tokenizer=tokenizer,
+        raw=raw_samples,
+        taxonomy_hierarchy=use_taxonomy_hierarchy if raw_samples else False,
+    )
 
 
 def get_csv_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None):

@@ -1,51 +1,87 @@
 #!/usr/bin/env bash
-#SBATCH --nodes=4
+
+#SBATCH --nodes=1
 #SBATCH --account=[account]
-#SBATCH --gpus-per-node=8
+#SBATCH --gpus-per-node=4
 #SBATCH --ntasks-per-node=1
-#SBATCH --partition=gpu
-#SBATCH --job-name=bioclip-2
-#SBATCH --time=240:00:00
+#SBATCH --partition=[partition]
+#SBATCH --job-name=bioclip-train
+#SBATCH --time=38:00:00
 #SBATCH --mem=800GB
 
-##### Number of total processes 
-echo "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX "
-echo "Nodelist:= " $SLURM_JOB_NODELIST
-echo "Number of nodes:= " $SLURM_JOB_NUM_NODES
-echo "Ntasks per node:= "  $SLURM_NTASKS_PER_NODE
-echo "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX "
+set -euo pipefail
 
-host_node=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
-echo $host_node
+module load miniconda3/24.1.2-py310
+conda activate bioclip-train
 
-export RDZV_HOST=$host_node
-export RDZV_PORT=29400
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+cd "${REPO_ROOT}"
 
-srun torchrun --nnodes=4 --nproc_per_node 8 \
-  --rdzv_id=$RANDOM --rdzv_backend=c10d --rdzv_endpoint=$RDZV_HOST:$RDZV_PORT \
-  -m src.training.main \
-  --save-frequency 1 \
-  --train-data '[training-dir]/shard-{00000..24235}.tar' \
-  --val-data '[evaluation-dir]/shard-{000000..000031}.tar' \
-  --dataset-type 'webdataset' \
-  --pretrained 'laion2b_s32b_b82k' \
-  --text_type 'random' \
-  --dataset-resampled \
-  --warmup 1875 \
-  --batch-size 2816 \
-  --accum-freq 1 \
-  --epochs 30 \
-  --workers 8 \
-  --model ViT-L-14 \
-  --log-every-n-steps 1 \
-  --lr 1e-4 \
-  --seed 42 \
-  --local-loss \
-  --gather-with-grad \
-  --grad-checkpointing \
-  --logs-dir './logs' \
-  --precision pure_bf16 \
-  --continual-data '[laion-dir]/{00000..03999}.tar' \
-  --continual_text_type '' \
-  --continual-batch-size 320 \
-  --torchcompile \
+TRAIN_DATA='/path/to/train/shards/shard-{000000..000031}.tar'
+VAL_DATA='/path/to/val/shards/shard-{000000..000031}.tar'
+PRETRAINED='[checkpoint-path]'
+LOG_DIR='./logs_renewed'
+
+MODEL_TYPE='ViT-B-16'
+BATCH_SIZE=3078
+WORKERS=8
+EPOCHS=80
+LR=1e-4
+WARMUP=300
+SEED=42
+
+USE_HYPERBOLIC=0
+HYPERBOLIC_SIMILARITY='dist'
+HYPERBOLIC_CURV_INIT=1
+HYPERBOLIC_LEARN_CURV=0
+HYPERBOLIC_WARMUP_EPOCHS=0
+
+TAXONOMY_IMAGE_WEIGHTING='standard'
+
+CMD=(
+  torchrun --nproc_per_node 4
+  -m src.training.main
+  --train-data "${TRAIN_DATA}"
+  --val-data "${VAL_DATA}"
+  --dataset-type webdataset
+  --pretrained "${PRETRAINED}"
+  --text_type 'taxon'
+  --dataset-resampled
+  --warmup "${WARMUP}"
+  --batch-size "${BATCH_SIZE}"
+  --accum-freq 1
+  --epochs "${EPOCHS}"
+  --workers "${WORKERS}"
+  --save-frequency 10
+  --model "${MODEL_TYPE}"
+  --log-every-n-steps 1
+  --lr "${LR}"
+  --seed "${SEED}"
+  --local-loss
+  --gather-with-grad
+  --grad-checkpointing
+  --logs "${LOG_DIR}"
+  --taxonomy-loss-only
+  --taxonomy-compare-same-level 1
+  --taxonomy-use-all-level-data 1
+  --taxonomy-group-same-text 1
+  --taxonomy-image-weighting "${TAXONOMY_IMAGE_WEIGHTING}"
+  --val-frequency 0
+  --weights-only 0
+  --torchcompile
+)
+
+if [[ "${USE_HYPERBOLIC}" == "1" ]]; then
+  CMD+=(
+    --use-hyperbolic
+    --hyperbolic-load-nonstrict
+    --hyperbolic-curv-init "${HYPERBOLIC_CURV_INIT}"
+    --hyperbolic-learn-curv "${HYPERBOLIC_LEARN_CURV}"
+    --hyperbolic-warmup-epochs "${HYPERBOLIC_WARMUP_EPOCHS}"
+    --hyperbolic-similarity "${HYPERBOLIC_SIMILARITY}"
+  )
+fi
+
+echo "[INFO] ${CMD[*]}"
+"${CMD[@]}"

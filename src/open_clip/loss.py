@@ -4,6 +4,8 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
+from . import lorentz as L
+
 try:
     import torch.distributed.nn
     from torch import distributed as dist
@@ -504,3 +506,249 @@ class SigLipLoss(nn.Module):
                 assert False
 
         return {"contrastive_loss": loss} if output_dict else loss
+
+
+def _unwrap_model(model):
+    if hasattr(model, "module"):
+        return model.module
+    return model
+
+
+def _build_positive_mask(assignments, num_texts, device, dtype):
+    batch = assignments.shape[0]
+    mask = torch.zeros(batch, num_texts, device=device, dtype=dtype)
+    row_indices = torch.arange(batch, device=device)
+    mask[row_indices, assignments.to(device)] = 1.0
+    return mask
+
+
+def _multi_positive_contrastive_loss(logits, pos_mask):
+    eps = 1e-6
+    log_probs = logits.log_softmax(dim=1)
+    positive_counts = pos_mask.sum(dim=1).clamp(min=eps)
+    return -(log_probs * pos_mask).sum(dim=1) / positive_counts
+
+
+def _group_balanced_image_loss(logits, inverse_indices, num_texts):
+    log_probs = logits.log_softmax(dim=1)
+    losses = []
+    for text_idx in range(num_texts):
+        group_mask = inverse_indices == text_idx
+        if not torch.any(group_mask):
+            continue
+        losses.append(-log_probs[group_mask, text_idx].mean())
+    if not losses:
+        return None
+    return torch.stack(losses).mean()
+
+
+def _compute_taxonomy_logits(model, image_features, text_features, logit_scale, device):
+    del device
+    use_hyperbolic = getattr(model, "use_hyperbolic", False)
+    hyperbolic_similarity = getattr(model, "hyperbolic_similarity", "dist")
+    if use_hyperbolic:
+        curv = model.curv.exp() if hasattr(model, "curv") else 1.0
+        image_features = image_features.float()
+        text_features = text_features.float()
+        if hyperbolic_similarity == "angle":
+            logits = -L.pairwise_oxy_angle(image_features, text_features, curv.float())
+        else:
+            logits = -L.pairwise_dist(image_features, text_features, curv.float())
+        return logit_scale.float() * logits
+    return logit_scale * image_features @ text_features.t()
+
+
+def _taxonomy_loss_from_candidates(
+    model,
+    image_features,
+    candidate_tokens,
+    assignments,
+    logit_scale,
+    device,
+    autocast,
+    group_same_text=True,
+    return_components=False,
+):
+    if not isinstance(candidate_tokens, torch.Tensor):
+        return None
+
+    tokens = candidate_tokens.contiguous()
+    assignments = assignments.long()
+    if group_same_text:
+        unique_tokens, inverse_indices = torch.unique(tokens, dim=0, sorted=False, return_inverse=True)
+        tokens_for_encode = unique_tokens.to(device)
+        grouped_assignments = inverse_indices[assignments].to(device)
+    else:
+        tokens_for_encode = tokens.to(device)
+        grouped_assignments = assignments.to(device)
+
+    with autocast():
+        text_features = model.encode_text(tokens_for_encode, normalize=True)
+
+    logits = _compute_taxonomy_logits(model, image_features, text_features, logit_scale, device)
+    pos_mask = _build_positive_mask(grouped_assignments, text_features.shape[0], device, logits.dtype)
+
+    weighting = getattr(model, "taxonomy_image_weighting", "balanced")
+    if weighting == "standard":
+        image_loss = _multi_positive_contrastive_loss(logits, pos_mask).mean()
+    else:
+        image_loss = _group_balanced_image_loss(logits, grouped_assignments, text_features.shape[0])
+        if image_loss is None:
+            image_loss = _multi_positive_contrastive_loss(logits, pos_mask).mean()
+
+    text_mask = pos_mask.t()
+    text_logits = logits.t()
+    valid_text_rows = text_mask.sum(dim=1) > 0
+    if torch.any(valid_text_rows):
+        text_loss = _multi_positive_contrastive_loss(
+            text_logits[valid_text_rows], text_mask[valid_text_rows]
+        ).mean()
+    else:
+        text_loss = logits.new_zeros(())
+
+    level_loss = 0.5 * (image_loss + text_loss)
+    if return_components:
+        return level_loss, image_loss, text_loss
+    return level_loss
+
+
+def _taxonomy_level_loss(
+    model,
+    image_features,
+    level_tokens,
+    logit_scale,
+    device,
+    autocast,
+    return_components=False,
+):
+    if not isinstance(level_tokens, torch.Tensor):
+        return None
+    batch = level_tokens.shape[0]
+    assignments = torch.arange(batch, device=level_tokens.device)
+    group_same_text = bool(getattr(model, "taxonomy_group_same_text", True))
+    return _taxonomy_loss_from_candidates(
+        model=model,
+        image_features=image_features,
+        candidate_tokens=level_tokens,
+        assignments=assignments,
+        logit_scale=logit_scale,
+        device=device,
+        autocast=autocast,
+        group_same_text=group_same_text,
+        return_components=return_components,
+    )
+
+
+def compute_taxonomy_losses(model, image_features, taxonomy_tokens, logit_scale, device, autocast):
+    if not taxonomy_tokens:
+        return 0.0, {}
+    text_encoder = _unwrap_model(model)
+    compare_same_level = bool(getattr(text_encoder, "taxonomy_compare_same_level", True))
+    use_all_level_data = bool(getattr(text_encoder, "taxonomy_use_all_level_data", True))
+    group_same_text = bool(getattr(text_encoder, "taxonomy_group_same_text", True))
+    log_directional = bool(getattr(text_encoder, "taxonomy_log_directional_loss", False))
+    single_level_index = int(getattr(text_encoder, "taxonomy_single_level_index", -1))
+
+    valid_levels = [
+        (level_idx, level_tokens)
+        for level_idx, level_tokens in enumerate(taxonomy_tokens)
+        if isinstance(level_tokens, torch.Tensor)
+    ]
+    if not valid_levels:
+        return 0.0, {}
+
+    if use_all_level_data:
+        selected_levels = valid_levels
+    else:
+        if single_level_index < 0:
+            chosen = int(torch.randint(low=0, high=len(valid_levels), size=(1,), device=image_features.device).item())
+        else:
+            chosen = max(0, min(single_level_index, len(valid_levels) - 1))
+        selected_levels = [valid_levels[chosen]]
+
+    total_loss = 0.0
+    loss_dict = {}
+    overall_image_loss = image_features.new_zeros(())
+    overall_text_loss = image_features.new_zeros(())
+
+    if compare_same_level:
+        for level_idx, level_tokens in selected_levels:
+            level_out = _taxonomy_level_loss(
+                text_encoder,
+                image_features,
+                level_tokens,
+                logit_scale,
+                device,
+                autocast,
+                return_components=log_directional,
+            )
+            if level_out is None:
+                continue
+            if log_directional:
+                level_loss, image_loss, text_loss = level_out
+                loss_dict[f"taxonomy_level_{level_idx}_image_to_text_loss"] = image_loss
+                loss_dict[f"taxonomy_level_{level_idx}_text_to_image_loss"] = text_loss
+                overall_image_loss = overall_image_loss + image_loss
+                overall_text_loss = overall_text_loss + text_loss
+            else:
+                level_loss = level_out
+            loss_dict[f"taxonomy_level_{level_idx}_loss"] = level_loss
+            total_loss = total_loss + level_loss
+    else:
+        bank_tokens = torch.cat([level_tokens for _, level_tokens in selected_levels], dim=0)
+        batch = selected_levels[0][1].shape[0]
+        tokens = bank_tokens.contiguous()
+
+        if group_same_text:
+            unique_tokens, inverse_indices = torch.unique(tokens, dim=0, sorted=False, return_inverse=True)
+            tokens_for_encode = unique_tokens.to(device)
+        else:
+            inverse_indices = None
+            tokens_for_encode = tokens.to(device)
+
+        with autocast():
+            text_features = text_encoder.encode_text(tokens_for_encode, normalize=True)
+        logits = _compute_taxonomy_logits(text_encoder, image_features, text_features, logit_scale, device)
+        weighting = getattr(text_encoder, "taxonomy_image_weighting", "balanced")
+        base_assignments = torch.arange(batch, device=bank_tokens.device)
+
+        for level_pos, (level_idx, _) in enumerate(selected_levels):
+            assignments = base_assignments + (level_pos * batch)
+            if group_same_text:
+                grouped_assignments = inverse_indices[assignments].to(device)
+            else:
+                grouped_assignments = assignments.to(device)
+
+            pos_mask = _build_positive_mask(grouped_assignments, text_features.shape[0], device, logits.dtype)
+
+            if weighting == "standard":
+                image_loss = _multi_positive_contrastive_loss(logits, pos_mask).mean()
+            else:
+                image_loss = _group_balanced_image_loss(logits, grouped_assignments, text_features.shape[0])
+                if image_loss is None:
+                    image_loss = _multi_positive_contrastive_loss(logits, pos_mask).mean()
+
+            text_mask = pos_mask.t()
+            text_logits = logits.t()
+            valid_text_rows = text_mask.sum(dim=1) > 0
+            if torch.any(valid_text_rows):
+                text_loss = _multi_positive_contrastive_loss(
+                    text_logits[valid_text_rows], text_mask[valid_text_rows]
+                ).mean()
+            else:
+                text_loss = logits.new_zeros(())
+
+            level_loss = 0.5 * (image_loss + text_loss)
+            if log_directional:
+                loss_dict[f"taxonomy_level_{level_idx}_image_to_text_loss"] = image_loss
+                loss_dict[f"taxonomy_level_{level_idx}_text_to_image_loss"] = text_loss
+                overall_image_loss = overall_image_loss + image_loss
+                overall_text_loss = overall_text_loss + text_loss
+            loss_dict[f"taxonomy_level_{level_idx}_loss"] = level_loss
+            total_loss = total_loss + level_loss
+
+    if log_directional:
+        loss_dict["taxonomy_overall_image_to_text_loss"] = overall_image_loss
+        loss_dict["taxonomy_overall_text_to_image_loss"] = overall_text_loss
+
+    return total_loss, loss_dict

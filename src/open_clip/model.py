@@ -15,6 +15,7 @@ from torch import nn
 from torch.utils.checkpoint import checkpoint
 from functools import partial
 
+from . import lorentz as L
 from .hf_model import HFTextEncoder
 from .modified_resnet import ModifiedResNet
 from .timm_model import TimmModel
@@ -485,6 +486,91 @@ class CLIP(nn.Module):
         if self.logit_bias is not None:
             return image_features, continual_features, text_features, self.logit_scale.exp(), self.logit_bias
         return image_features, continual_features, text_features, self.logit_scale.exp()
+
+
+class HyperbolicCLIP(CLIP):
+    """CLIP variant that lifts embeddings onto the Lorentz hyperboloid."""
+
+    def __init__(
+            self,
+            embed_dim: int,
+            vision_cfg: CLIPVisionCfg,
+            text_cfg: CLIPTextCfg,
+            quick_gelu: bool = False,
+            init_logit_scale: float = np.log(1 / 0.07),
+            init_logit_bias: Optional[float] = None,
+            nonscalar_logit_scale: bool = False,
+            cast_dtype: Optional[torch.dtype] = None,
+            output_dict: bool = False,
+            hyperbolic_curv_init: float = 1.0,
+            hyperbolic_learn_curv: bool = True,
+    ):
+        super().__init__(
+            embed_dim=embed_dim,
+            vision_cfg=vision_cfg,
+            text_cfg=text_cfg,
+            quick_gelu=quick_gelu,
+            init_logit_scale=init_logit_scale,
+            init_logit_bias=init_logit_bias,
+            nonscalar_logit_scale=nonscalar_logit_scale,
+            cast_dtype=cast_dtype,
+            output_dict=output_dict,
+        )
+        self.use_hyperbolic = True
+        self.curv = nn.Parameter(
+            torch.tensor(hyperbolic_curv_init).log(), requires_grad=hyperbolic_learn_curv
+        )
+        self._curv_minmax = {
+            "max": math.log(hyperbolic_curv_init * 10),
+            "min": math.log(hyperbolic_curv_init / 10),
+        }
+        self.visual_alpha = nn.Parameter(torch.tensor(embed_dim**-0.5).log())
+        self.textual_alpha = nn.Parameter(torch.tensor(embed_dim**-0.5).log())
+        self.hyperbolic_enabled = True
+
+    def _clamped_hyperbolic_params(self):
+        curv = torch.clamp(self.curv, **self._curv_minmax)
+        visual_alpha = torch.clamp(self.visual_alpha, max=0.0)
+        textual_alpha = torch.clamp(self.textual_alpha, max=0.0)
+        return curv, visual_alpha, textual_alpha
+
+    def set_hyperbolic_enabled(self, enabled: bool):
+        self.hyperbolic_enabled = bool(enabled)
+        self.use_hyperbolic = bool(enabled)
+
+    def _project_to_hyperboloid(self, feats, scale, curv):
+        scaled_feats = (feats * scale.exp()).float()
+        return L.exp_map0(scaled_feats, curv.exp().float())
+
+    def encode_image(self, image, normalize: bool = False):
+        if not self.hyperbolic_enabled:
+            return super().encode_image(image, normalize=True)
+        curv, visual_alpha, _ = self._clamped_hyperbolic_params()
+        features, continual_features = super().encode_image(image, normalize=False)
+        features = self._project_to_hyperboloid(features, visual_alpha, curv)
+        if continual_features is not None:
+            continual_features = self._project_to_hyperboloid(continual_features, visual_alpha, curv)
+        return features, continual_features
+
+    def encode_text(self, text, normalize: bool = False):
+        if not self.hyperbolic_enabled:
+            return super().encode_text(text, normalize=True)
+        curv, _, textual_alpha = self._clamped_hyperbolic_params()
+        features = super().encode_text(text, normalize=False)
+        return self._project_to_hyperboloid(features, textual_alpha, curv)
+
+    def get_logits(self, image, text):
+        if not self.hyperbolic_enabled:
+            return super().get_logits(image, text)
+        image_features, _ = self.encode_image(image, normalize=False)
+        text_features = self.encode_text(text, normalize=False)
+        curv = self.curv.exp()
+        image_logits = -L.pairwise_dist(image_features, text_features, curv)
+        image_logits = self.logit_scale.exp() * image_logits
+        if self.logit_bias is not None:
+            image_logits += self.logit_bias
+        text_logits = image_logits.T
+        return image_logits, text_logits
 
 
 class CustomTextCLIP(nn.Module):

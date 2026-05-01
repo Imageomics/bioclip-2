@@ -1,9 +1,14 @@
 logs/
+logs_renewed/
+logs_taxonomy_eval/
+logs_taxonomy_eval_coarse_to_fine/
+plots_species_context/
 wandb/
 models/
 features/
 results/
 tmp/
+slurm-*.out
 
 tests/data/
 *.pt

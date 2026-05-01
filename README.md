@@ -1,144 +1,256 @@
-# BioCLIP 2  [![DOI](https://zenodo.org/badge/991449538.svg)](https://doi.org/10.5281/zenodo.15644363)
+# BioCLIP 2 for Hierarchical Fine-Grained Evaluation
 
-This repository contains the code for [BioCLIP 2](https://huggingface.co/imageomics/bioclip-2) training and evaluation (testing and visualizing embeddings). We developed this repository based on [BioCLIP](https://github.com/imageomics/BioCLIP) and [OpenCLIP](https://github.com/mlfoundations/open_clip).
-BioCLIP 2 is trained on the [TreeOfLife-200M dataset](https://huggingface.co/datasets/imageomics/TreeOfLife-200M) and achieves state-of-the-art performance on both species classification and other biological visual tasks. The BioCLIP 2 website is hosted from the `gh-pages` branch of this repository.
+This repository contains a BioCLIP 2 based codebase for hierarchical fine-grained classification experiments. It includes Euclidean and hyperbolic training, taxonomy-only contrastive loss, top-down and coarse-to-fine evaluation, nLCA reporting, taxonomy embedding visualization, and dataset preparation utilities for CrypticBio-style evaluation.
 
-[Paper](https://doi.org/10.48550/arXiv.2505.23883) | [Model](https://huggingface.co/imageomics/bioclip-2) | [Data](https://huggingface.co/datasets/imageomics/TreeOfLife-200M) | [Demo](https://huggingface.co/spaces/imageomics/bioclip-2-demo)
----
-
-BioCLIP 2 is a CLIP model trained on a new 200M-image dataset of biological organisms with fine-grained taxonomic labels.
-BioCLIP 2 outperforms general domain baselines on a wide spread of biology-related tasks, including zero-shot and few-shot classification.
-
-## 📰 News and Updates
-
-- 💖 **February 2026:** [BioCLIP 2.5 Huge](https://huggingface.co/imageomics/bioclip-2.5-vith14) is released for Love Data Week! The latest model, based on the [OpenCLIP ViT-H/14 checkpoint](https://huggingface.co/laion/CLIP-ViT-H-14-laion2B-s32B-b79K), used the accelerated training code from [v2.0.0](https://github.com/Imageomics/bioclip-2/releases/tag/v2.0.0) and the updated [TreeOfLife-200M](https://huggingface.co/datasets/imageomics/TreeOfLife-200M) dataset (19M more images and some additional content-based filtering).
-- 🔗 **July 2025:** BioCLIP 2 is set as the default model for [pybioclip](https://github.com/Imageomics/pybioclip), with full prediction and text embedding support.
-- 🚀 **June 2025:** [BioCLIP 2](https://huggingface.co/imageomics/bioclip-2) is released! Trained on the [TreeOfLife-200M dataset](https://huggingface.co/datasets/imageomics/TreeOfLife-200M) (Revision [a8f38b4](http://huggingface.co/datasets/imageomics/TreeOfLife-200M/tree/a8f38b4388579862c56ae57d6f094c2ac0e92e12)), BioCLIP 2 demonstrates emergent properties beyond species classification after extensive hierarchical contrastive training.
+The current setup is intended to support the main experiments described in the hierarchical contrastive learning workflow:
+- level-restricted contrastive training
+- taxonomy-only hierarchical contrastive loss
+- Euclidean and hyperbolic variants
+- coarse-to-fine evaluation
+- top-down constrained evaluation
+- normalized Lowest Common Ancestor (`nLCA`) reporting
+- text embedding visualization across taxonomy levels
 
 ## Table of Contents
 
-1. [Model](#model)
-2. [Training and Evaluation Commands](#commands)
-3. [Paper, website, and data](#paper)
-4. [Citation](#citation)
+1. [Overview](#overview)
+2. [Environment](#environment)
+3. [Training](#training)
+4. [Evaluation](#evaluation)
+5. [Visualization](#visualization)
+6. [CrypticBio Preparation](#crypticbio-preparation)
+7. [Repository Layout](#repository-layout)
+8. [Notes](#notes)
+9. [License](#license)
 
-## Model
+## Overview
 
-The main differences in the training implementation between BioCLIP 2 and BioCLIP are the adopted model architecture and the introduction of experience replay. BioCLIP 2 employs a ViT-L/14 CLIP architecture pre-trained with LAION-2B data. Along with the contrastive optimization of biological organism data, we also include part of the LAION-2B data for experience replay. In order to reduce the influence of the domain gap between hierarchical labels and image captions, we use two separate visual projectors on top of the visual encoder. This part of the code is in [transformer.py](src/open_clip/transformer.py).
-We provide the weight of BioCLIP 2 in the [BioCLIP 2 model repo](https://huggingface.co/imageomics/bioclip-2).
+The main additions in this repository are:
+- taxonomy-only training via `--taxonomy-loss-only`
+- level-restricted comparisons via `--taxonomy-compare-same-level`
+- all-level training via `--taxonomy-use-all-level-data`
+- configurable taxonomy image-side weighting via `--taxonomy-image-weighting`
+- hyperbolic CLIP support via `--use-hyperbolic`
+- hierarchical evaluation scripts for both unrestricted coarse-to-fine and top-down constrained prediction
+- `nLCA` reporting in the top-down evaluation script
 
-## Commands
+Key implementation files:
+- training arguments: [src/training/params.py](src/training/params.py)
+- taxonomy loss: [src/open_clip/loss.py](src/open_clip/loss.py)
+- hyperbolic model: [src/open_clip/model.py](src/open_clip/model.py), [src/open_clip/lorentz.py](src/open_clip/lorentz.py)
+- training entrypoint: [src/training/main.py](src/training/main.py)
+- top-down evaluation: [src/evaluation/zero_shot_taxonomy_levels_topdown.py](src/evaluation/zero_shot_taxonomy_levels_topdown.py)
+- coarse-to-fine evaluation: [src/evaluation/zero_shot_taxonomy_levels_coarse_to_fine.py](src/evaluation/zero_shot_taxonomy_levels_coarse_to_fine.py)
 
-### Training
-The [TreeOfLife-200M](https://huggingface.co/datasets/imageomics/TreeOfLife-200M) images can be downloaded from their original sources with [distributed-downloader](https://github.com/Imageomics/distributed-downloader). [TreeOfLife-toolbox/docs](https://github.com/Imageomics/TreeOfLife-toolbox/tree/main/docs#treeoflife200m-dataset-download-guide) contains instructions for full download into the proper format, and the code to construct the webdataset for training. These repositories are included in the supplementary material.
-[img2dataset](https://github.com/rom1504/img2dataset) can be used to download data from the first three metadata parquet files of LAION-2B-en; we use the first downloaded 4,000 tar files for experience replay. Finally, download the validation set from [TreeOfLife-10M](https://huggingface.co/datasets/imageomics/TreeOfLife-10M) ([download instructions](https://github.com/Imageomics/bioclip/blob/main/docs/imageomics/treeoflife10m.md)), as we use that for evaluation during training.
+## Environment
 
-Clone this repository, then install the requirements:
+Create the two main conda environments from the repository root:
+
+```bash
+conda env create -f bioclip-train.yml
+conda env create -f bioclip-test.yml
 ```
-conda env create -f requirements.yml
+
+Environment roles:
+- `bioclip-train`: training
+- `bioclip-test`: evaluation, dataset preparation, and visualization
+
+This workflow uses `bioclip-train.yml` and `bioclip-test.yml` as the maintained environment definitions. The older `requirements.txt` and `requirements.yml` files are not part of the current branch setup.
+
+## Training
+
+A single configurable training launcher is included:
+- [slurm/train.sh](slurm/train.sh)
+
+The script is a template. Before running it, update:
+- repository path
+- training and validation shard paths
+- checkpoint path
+- output log directory
+- `USE_HYPERBOLIC`
+
+### Core taxonomy-only recipe
+
+The main taxonomy-only configuration is:
+
+```bash
+--taxonomy-loss-only \
+--taxonomy-compare-same-level 1 \
+--taxonomy-use-all-level-data 1 \
+--taxonomy-group-same-text 1 \
+--taxonomy-image-weighting standard
 ```
 
-To train the model, run:
+This means:
+- use all taxonomy levels during training
+- compare each level only against text from the same level
+- merge duplicate text labels within a batch
+- use the standard taxonomy image-side weighting from the paper setup
+
+### Example launcher settings
+
+Euclidean:
+
+```bash
+USE_HYPERBOLIC=0
 ```
+
+Hyperbolic:
+
+```bash
+USE_HYPERBOLIC=1
+HYPERBOLIC_SIMILARITY="dist"
+```
+
+Run:
+
+```bash
 sbatch slurm/train.sh
 ```
 
-### Evaluation
-**Species classification**
+## Evaluation
 
-We evaluated [BioCLIP 2](https://huggingface.co/imageomics/bioclip-2) on the same test sets as used for [BioCLIP](https://huggingface.co/imageomics/bioclip), as well as a newly curated camera trap test set:
+Two taxonomy evaluation launchers are included:
+- [slurm/eval_which_level.sh](slurm/eval_which_level.sh)
+- [slurm/eval_topdown.sh](slurm/eval_topdown.sh)
 
-- [NABirds](https://dl.allaboutbirds.org/nabirds): In place of [Birds525](https://www.kaggle.com/datasets/gpiosenka/100-bird-species), since it is no longer available.
-- [Meta-Album](https://meta-album.github.io/): For comparison to [BioCLIP](https://huggingface.co/imageomics/bioclip), we used the Plankton, Insects, Insects 2, PlantNet, Fungi, PlantVillage, and Medicinal Leaf datasets.
-- [Rare Species](https://huggingface.co/datasets/imageomics/rare-species): Nearly 12K images representing 400 species labeled Near Threatened through Extinct in the Wild by the [IUCN Red List](https://www.iucnredlist.org/).
-- [IDLE-OO Camera Traps](https://huggingface.co/datasets/imageomics/IDLE-OO-Camera-Traps): A new dataset we curated to evaluate performance on camera trap images. It is constructed from five [Labeled Information Library of Alexandria: Biology and Conservation (LILA BC)](https://lila.science) datasets labeled to the image-level, which we then balanced. See the [IDLE-OO Camera Traps dataset](https://huggingface.co/datasets/imageomics/IDLE-OO-Camera-Traps) for more details.
+Both scripts support:
+- Euclidean or hyperbolic evaluation
+- configurable checkpoint path
+- dataset root and metadata file
+- optional `target_kingdom`
+- optional CSV export
 
-The metadata used in evaluation is provided in [`data/annotation`](data/annotation/), including [NABirds](data/annotation/nabirds), [Rare Species](data/annotation/rare_species/), and other benchmarks from [Meta Album](data/annotation/meta-album/). All evaluation parameters are described in [src/evaluation/README.md](src/evaluation/README.md).
-Please be sure to update the directories accordingly to reflect the locations of these data and metadata in `slurm/eval.sh` and run:
-```
-sbatch slurm/eval.sh
-```
+### Coarse-to-fine evaluation
 
-**Other biological visual tasks**
+This runs independent taxonomy-level retrieval and reports:
+- per-level accuracy
+- first misclassification depth counts
 
-We also evaluated on biological tasks that go beyond species classification with the following datasets:
-- [NeWT](https://github.com/visipedia/newt)
-- [FishNet](https://fishnet-2023.github.io/)
-- [AwA2](https://cvml.ista.ac.at/AwA2/)
-- [Herbarium19](https://www.kaggle.com/c/herbarium-2019-fgvc6/data)
-- [PlantDoc](https://github.com/pratikkayal/PlantDoc-Dataset)
+Launcher:
 
-Please be sure to update the directories accordingly to reflect the locations of these data in `slurm/eval_other.sh` and run:
-```
-sbatch slurm/eval_other.sh
+```bash
+sbatch slurm/eval_which_level.sh
 ```
 
-<h2 id="paper">Paper, Website, and Data</h2>
+Backend:
 
-We have a preprint on [arXiv](https://doi.org/10.48550/arXiv.2505.23883) and a [project website](https://imageomics.github.io/bioclip-2/).
-
-Our data is published on Hugging Face: [TreeOfLife-200M](https://huggingface.co/datasets/imageomics/TreeOfLife-200M) and [IDLE-OO Camera Traps](https://huggingface.co/datasets/imageomics/IDLE-OO-Camera-Traps). Step-by-step download instructions for TreeOfLife-200M are available in [TreeOfLife-toolbox](https://github.com/Imageomics/TreeOfLife-toolbox/tree/main/docs#treeoflife200m-dataset-download-guide).
-
-## Citation
-
-Please cite our papers and the associated repositories if you use our code or results.
-
-```
-@article{gu2025bioclip,
-  title = {{B}io{CLIP} 2: Emergent Properties from Scaling Hierarchical Contrastive Learning}, 
-  author = {Jianyang Gu and Samuel Stevens and Elizabeth G Campolongo and Matthew J Thompson and Net Zhang and Jiaman Wu and Andrei Kopanev and Zheda Mai and Alexander E. White and James Balhoff and Wasila M Dahdul and Daniel Rubenstein and Hilmar Lapp and Tanya Berger-Wolf and Wei-Lun Chao and Yu Su},
-  year = {2025},
-  eprint={2505.23883},
-  archivePrefix={arXiv},
-  primaryClass={cs.CV},
-  url={https://arxiv.org/abs/2505.23883}, 
-}
- ```
-
-Our code (this repository):
-```
-@software{bioclip2code,
-  author = {Jianyang Gu and Samuel Stevens and Elizabeth G. Campolongo and Matthew J. Thompson and Net Zhang and Jiaman Wu and Zheda Mai},
-  doi = {10.5281/zenodo.15644363},
-  title = {{B}io{CLIP} 2},
-  version = {2.0.0},
-  month = {jan},
-  year = {2026}
-}
+```bash
+python -m src.evaluation.zero_shot_taxonomy_levels_coarse_to_fine
 ```
 
-Also consider citing OpenCLIP and BioCLIP:
+### Top-down evaluation
 
-```
-@software{ilharco_gabriel_2021_5143773,
-  author={Ilharco, Gabriel and Wortsman, Mitchell and Wightman, Ross and Gordon, Cade and Carlini, Nicholas and Taori, Rohan and Dave, Achal and Shankar, Vaishaal and Namkoong, Hongseok and Miller, John and Hajishirzi, Hannaneh and Farhadi, Ali and Schmidt, Ludwig},
-  title={OpenCLIP},
-  year={2021},
-  doi={10.5281/zenodo.5143773},
-}
+This runs constrained prediction from `kingdom -> ... -> species`, where the candidate set at each level is restricted to the descendants of the predicted parent.
+
+It reports:
+- per-level accuracy
+- first misclassification depth counts
+- `nLCA`
+
+Launcher:
+
+```bash
+sbatch slurm/eval_topdown.sh
 ```
 
-Original BioCLIP Paper:
- ```
-@inproceedings{stevens2024bioclip,
-  title = {{B}io{CLIP}: A Vision Foundation Model for the Tree of Life}, 
-  author = {Samuel Stevens and Jiaman Wu and Matthew J Thompson and Elizabeth G Campolongo and Chan Hee Song and David Edward Carlyn and Li Dong and Wasila M Dahdul and Charles Stewart and Tanya Berger-Wolf and Wei-Lun Chao and Yu Su},
-  booktitle={Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
-  year = {2024},
-  pages = {19412-19424}
-}
+Backend:
+
+```bash
+python -m src.evaluation.zero_shot_taxonomy_levels_topdown
 ```
-Original Code:
+
+### nLCA
+
+`nLCA` in the top-down script is computed as:
+- the depth of the longest correct prefix shared by predicted and ground-truth taxonomy paths
+- divided by the total number of evaluated levels
+
+Interpretation:
+- `1.0` means the whole taxonomy path is correct
+- `0.0` means the prediction is already wrong at the first level
+
+## Visualization
+
+The repository includes a taxonomy text embedding visualization script:
+- [scripts/visualize_species_ancestors_siblings_tsne.py](scripts/visualize_species_ancestors_siblings_tsne.py)
+
+SLURM launcher:
+- [slurm/visualize_species_ancestors_siblings_tsne_euclidean.sh](slurm/visualize_species_ancestors_siblings_tsne_euclidean.sh)
+
+This tool can:
+- plot a target species together with its ancestors and sibling labels
+- compare multiple checkpoints side by side
+- compare Euclidean and hyperbolic checkpoints in the same figure
+
+Run:
+
+```bash
+sbatch slurm/visualize_species_ancestors_siblings_tsne_euclidean.sh
 ```
-@software{bioclip2023code,
-  author = {Samuel Stevens and Jiaman Wu and Matthew J. Thompson and Elizabeth G. Campolongo and Chan Hee Song and David Edward Carlyn},
-  doi = {10.5281/zenodo.10895871},
-  title = {BioCLIP},
-  version = {v1.0.0},
-  year = {2024}
-}
+
+Before launching, update:
+- `PRETRAINED`
+- `METADATA_PATH`
+- `SPECIES_BINOMIAL`
+- optional `USE_HYPERBOLIC`
+- optional `COMPARE_*` arrays
+
+## CrypticBio Preparation
+
+To build a `CrypticBio_eval` folder compatible with the evaluation scripts, use:
+- [scripts/prepare_crypticbio_eval.py](scripts/prepare_crypticbio_eval.py)
+- [slurm/prepare_crypticbio_eval.sh](slurm/prepare_crypticbio_eval.sh)
+
+This utility downloads `gmanolache/CrypticBio` from Hugging Face and exports:
+
+```text
+<out_dir>/
+  metadata.csv
+  images/<split>/*.jpg
 ```
+
+Run:
+
+```bash
+sbatch slurm/prepare_crypticbio_eval.sh
+```
+
+Or directly:
+
+```bash
+python scripts/prepare_crypticbio_eval.py \
+  --out-dir /path/to/CrypticBio_eval
+```
+
+If required, install missing dependencies:
+
+```bash
+pip install datasets pillow pyarrow
+```
+
+## Repository Layout
+
+Important paths in this repository:
+
+- `src/training/`
+- `src/open_clip/`
+- `src/evaluation/`
+- `slurm/train.sh`
+- `slurm/eval_which_level.sh`
+- `slurm/eval_topdown.sh`
+- `slurm/visualize_species_ancestors_siblings_tsne_euclidean.sh`
+- `slurm/prepare_crypticbio_eval.sh`
+- `scripts/visualize_species_ancestors_siblings_tsne.py`
+- `scripts/prepare_crypticbio_eval.py`
+
+## Notes
+
+- Several provided `slurm/*.sh` files are templates with placeholder paths. Update them before use.
+- Some training scripts still contain hardcoded local paths from the development environment. Treat them as examples, not drop-in universal launchers.
+- Hyperbolic evaluation supports `inner`, `angle`, and `dist` similarity options.
+- Euclidean evaluation uses the default normalized dot product.
 
 ## License
 
-BioCLIP 2 is released under the MIT License. Some elements of the code are copyright by others (see [`LICENSE`](LICENSE)); detailed provenance information is provided in [`HISTORY.md`](HISTORY.md).
+BioCLIP 2 is released under the MIT License. See [LICENSE](LICENSE).

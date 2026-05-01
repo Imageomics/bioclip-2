@@ -11,7 +11,7 @@ from typing import Any, Dict, Optional, Tuple, Union
 import torch
 
 from .convert import convert_state_dict
-from .model import CLIP, CustomTextCLIP, convert_weights_to_lp, convert_to_custom_text_state_dict,\
+from .model import CLIP, HyperbolicCLIP, CustomTextCLIP, convert_weights_to_lp, convert_to_custom_text_state_dict,\
     resize_pos_embed, get_cast_dtype, resize_text_pos_embed, set_model_preprocess_cfg
 from .coca_model import CoCa
 from .loss import ClipLoss, DistillClipLoss, CoCaLoss, SigLipLoss, ContinualLoss
@@ -485,6 +485,9 @@ def create_model(
     else:
         enable_default_text_weights = False  # for accurate logging
 
+    use_hyperbolic = bool(model_kwargs.pop("use_hyperbolic", False))
+    hyperbolic_load_nonstrict = bool(model_kwargs.pop("hyperbolic_load_nonstrict", False))
+
     # Determine model class (CLIP, CustomTextCLIP, CoCa)
     custom_text = model_cfg.pop('custom_text', False) or force_custom_text or is_hf_text_model
     if custom_text:
@@ -495,7 +498,7 @@ def create_model(
             model_class = CustomTextCLIP
     else:
         # Default to standard CLIP
-        model_class = CLIP
+        model_class = HyperbolicCLIP if use_hyperbolic else CLIP
 
     # Apply final **kwargs overrides (highest priority) to a copy of model_cfg
     final_model_cfg = deepcopy(model_cfg)
@@ -518,7 +521,7 @@ def create_model(
         load_checkpoint(
             model,
             checkpoint_path,
-            strict=True,
+            strict=not (use_hyperbolic and hyperbolic_load_nonstrict),
             weights_only=weights_only,
             device='cpu' # Load to CPU first
         )

@@ -222,6 +222,11 @@ def main(args):
     if args.siglip:
         model_kwargs['init_logit_scale'] = np.log(10)  # different from CLIP
         model_kwargs['init_logit_bias'] = -10
+    if getattr(args, "use_hyperbolic", False):
+        model_kwargs["use_hyperbolic"] = True
+        model_kwargs["hyperbolic_load_nonstrict"] = getattr(args, "hyperbolic_load_nonstrict", False)
+        model_kwargs["hyperbolic_curv_init"] = getattr(args, "hyperbolic_curv_init", 1.0)
+        model_kwargs["hyperbolic_learn_curv"] = bool(getattr(args, "hyperbolic_learn_curv", 1))
     model, preprocess_train, preprocess_val = create_model_and_transforms(
         args.model,
         args.pretrained,
@@ -242,8 +247,19 @@ def main(args):
         output_dict=True,
         is_continual=is_continual,
         cache_dir=args.cache_dir,
+        weights_only=bool(getattr(args, "weights_only", 1)),
         **model_kwargs,
     )
+    hyperbolic_similarity = getattr(args, "hyperbolic_similarity", "dist")
+    for candidate in (model, getattr(model, "module", None), getattr(model, "_orig_mod", None)):
+        if candidate is not None:
+            setattr(candidate, "hyperbolic_similarity", hyperbolic_similarity)
+            setattr(candidate, "taxonomy_image_weighting", getattr(args, "taxonomy_image_weighting", "balanced"))
+            setattr(candidate, "taxonomy_group_same_text", bool(getattr(args, "taxonomy_group_same_text", 1)))
+            setattr(candidate, "taxonomy_compare_same_level", bool(getattr(args, "taxonomy_compare_same_level", 1)))
+            setattr(candidate, "taxonomy_use_all_level_data", bool(getattr(args, "taxonomy_use_all_level_data", 1)))
+            setattr(candidate, "taxonomy_single_level_index", int(getattr(args, "taxonomy_single_level_index", -1)))
+            setattr(candidate, "taxonomy_log_directional_loss", bool(getattr(args, "taxonomy_log_directional_loss", 0)))
     if args.distill:
         # FIXME: currently assumes the model you're distilling from has the same tokenizer & transforms.
         dist_model, _, _ = create_model_and_transforms(
@@ -299,6 +315,8 @@ def main(args):
         if args.use_bn_sync:
             model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
         ddp_args = {}
+        if getattr(args, "use_hyperbolic", False) and getattr(args, "hyperbolic_warmup_epochs", 0) > 0:
+            ddp_args["find_unused_parameters"] = True
         if args.ddp_static_graph:
             # this doesn't exist in older PyTorch, arg only added if enabled
             ddp_args['static_graph'] = True
@@ -333,21 +351,39 @@ def main(args):
                 eps=args.eps,
                 **opt_kwargs,
             )
+            if getattr(args, "use_hyperbolic", False) and getattr(args, "hyperbolic_curv_lr_mult", 1.0) != 1.0:
+                logging.warning("Hyperbolic curvature LR multiplier is ignored for timm optimizers.")
         else:
             # If some params are not passed, we use the default values based on model name.
             exclude = lambda n, p: p.ndim < 2 or "bn" in n or "ln" in n or "bias" in n or 'logit_scale' in n
             include = lambda n, p: not exclude(n, p)
 
             named_parameters = list(model.named_parameters())
-            gain_or_bias_params = [p for n, p in named_parameters if exclude(n, p) and p.requires_grad]
-            rest_params = [p for n, p in named_parameters if include(n, p) and p.requires_grad]
+            curv_params = [
+                p for n, p in named_parameters
+                if n.endswith("curv") and p.requires_grad
+            ]
+            gain_or_bias_params = [
+                p for n, p in named_parameters
+                if exclude(n, p) and p.requires_grad and not n.endswith("curv")
+            ]
+            rest_params = [
+                p for n, p in named_parameters
+                if include(n, p) and p.requires_grad and not n.endswith("curv")
+            ]
 
             if opt == 'adamw':
+                param_groups = [
+                    {"params": gain_or_bias_params, "weight_decay": 0.},
+                    {"params": rest_params, "weight_decay": args.wd},
+                ]
+                if getattr(args, "use_hyperbolic", False) and curv_params:
+                    curv_lr = args.lr * getattr(args, "hyperbolic_curv_lr_mult", 1.0)
+                    param_groups.append(
+                        {"params": curv_params, "weight_decay": 0.0, "lr": curv_lr}
+                    )
                 optimizer = optim.AdamW(
-                    [
-                        {"params": gain_or_bias_params, "weight_decay": 0.},
-                        {"params": rest_params, "weight_decay": args.wd},
-                    ],
+                    param_groups,
                     lr=args.lr,
                     betas=(args.beta1, args.beta2),
                     eps=args.eps,
@@ -398,6 +434,9 @@ def main(args):
 
     # initialize datasets
     tokenizer = get_tokenizer(args.model, cache_dir=args.cache_dir, context_length=args.force_context_length)
+    for candidate in (model, getattr(model, "module", None), getattr(model, "_orig_mod", None)):
+        if candidate is not None:
+            setattr(candidate, "taxonomy_tokenizer", tokenizer)
     data = get_data(
         args,
         (preprocess_train, preprocess_val),
@@ -479,9 +518,23 @@ def main(args):
 
     loss = create_loss(args)
 
+    def _set_hyperbolic_enabled(target_model, enabled):
+        candidates = (
+            target_model,
+            getattr(target_model, "module", None),
+            getattr(target_model, "_orig_mod", None),
+        )
+        for candidate in candidates:
+            if candidate is not None and hasattr(candidate, "set_hyperbolic_enabled"):
+                candidate.set_hyperbolic_enabled(enabled)
+                return
+
     for epoch in range(start_epoch, args.epochs):
         if is_master(args):
             logging.info(f'Start epoch {epoch}')
+
+        if getattr(args, "use_hyperbolic", False) and args.hyperbolic_warmup_epochs > 0:
+            _set_hyperbolic_enabled(model, epoch >= args.hyperbolic_warmup_epochs)
 
         train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist_model, args, tb_writer=writer)
         completed_epoch = epoch + 1

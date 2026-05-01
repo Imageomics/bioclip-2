@@ -8,7 +8,6 @@ import time
 import numpy as np
 import torch
 import torch.nn.functional as F
-from torch.nn.parallel.distributed import DistributedDataParallel
 
 try:
     import wandb
@@ -16,6 +15,7 @@ except ImportError:
     wandb = None
 
 from ..open_clip import get_input_dtype, CLIP, CustomTextCLIP
+from ..open_clip.loss import compute_taxonomy_losses
 from .distributed import is_master
 from .zero_shot import zero_shot_eval
 from .precision import get_autocast
@@ -61,6 +61,115 @@ class AverageMeter(object):
         self.sum += val * n
         self.count += n
         self.avg = self.sum / self.count
+
+
+def _ensure_string(text_value):
+    if isinstance(text_value, bytes):
+        return text_value.decode('utf-8')
+    return str(text_value)
+
+
+def preprocess_raw_batch(batch, data_info, text_type):
+    if not getattr(data_info, 'raw', False):
+        return batch
+
+    preprocess_fn = getattr(data_info, 'preprocess_fn', None)
+    tokenizer = getattr(data_info, 'tokenizer', None)
+    taxonomy_hierarchy = getattr(data_info, 'taxonomy_hierarchy', False)
+    assert preprocess_fn is not None and tokenizer is not None, (
+        "Raw dataloader output requires preprocess and tokenizer functions."
+    )
+
+    def _preprocess_images(raw_images):
+        tensors = [preprocess_fn(img) for img in raw_images]
+        return torch.stack(tensors)
+
+    def _tokenize_texts(text_items):
+        strings = [_ensure_string(t) for t in text_items]
+        tokens = tokenizer(strings)
+        if isinstance(tokens, (tuple, list)):
+            return tokens[0]
+        return tokens
+
+    if text_type == 'random':
+        raw_images, sci, com, taxon, sci_com, taxon_com = batch
+        images = _preprocess_images(raw_images)
+        return (
+            images,
+            _tokenize_texts(sci),
+            _tokenize_texts(com),
+            _tokenize_texts(taxon),
+            _tokenize_texts(sci_com),
+            _tokenize_texts(taxon_com),
+        )
+
+    taxonomy_levels = None
+    if isinstance(batch, (tuple, list)):
+        raw_images, texts = batch[0], batch[1]
+        if taxonomy_hierarchy and len(batch) >= 3:
+            taxonomy_levels = batch[2]
+    else:
+        raw_images, texts = batch
+
+    images = _preprocess_images(raw_images)
+    tokens = _tokenize_texts(texts)
+
+    if taxonomy_hierarchy and taxonomy_levels is None and text_type == "level":
+        level_lists = []
+        for text_value in texts:
+            text_str = _ensure_string(text_value)
+            levels = [lvl for lvl in text_str.splitlines() if lvl.strip()]
+            level_lists.append(levels)
+        max_levels = max((len(lvls) for lvls in level_lists), default=0)
+        if max_levels > 0:
+            per_level_strings = [[] for _ in range(max_levels)]
+            for lvls in level_lists:
+                if not lvls:
+                    lvls = [""]
+                if len(lvls) < max_levels:
+                    lvls = lvls + [lvls[-1]] * (max_levels - len(lvls))
+                for lvl_idx in range(max_levels):
+                    per_level_strings[lvl_idx].append(lvls[lvl_idx])
+            taxonomy_tokens = [
+                _tokenize_texts(level_strings) for level_strings in per_level_strings
+            ]
+            return images, tokens, taxonomy_tokens
+
+    if taxonomy_levels is not None and len(taxonomy_levels) > 0:
+        first_entry = taxonomy_levels[0]
+        if isinstance(first_entry, (list, tuple)):
+            level_count = len(first_entry)
+            if level_count > 0:
+                per_level_strings = [[] for _ in range(level_count)]
+                for sample_levels in taxonomy_levels:
+                    if not isinstance(sample_levels, (list, tuple)) or len(sample_levels) != level_count:
+                        per_level_strings = []
+                        break
+                    for lvl_idx, lvl_text in enumerate(sample_levels):
+                        per_level_strings[lvl_idx].append(_ensure_string(lvl_text))
+                if per_level_strings and all(len(level_strings) == len(texts) for level_strings in per_level_strings):
+                    taxonomy_tokens = [
+                        _tokenize_texts(level_strings) for level_strings in per_level_strings
+                    ]
+                    return images, tokens, taxonomy_tokens
+
+    return images, tokens
+
+
+def extract_images_and_texts(batch):
+    if isinstance(batch, (tuple, list)):
+        return batch[0], batch[1]
+    return batch
+
+
+def get_taxonomy_tokens(batch):
+    if isinstance(batch, (tuple, list)) and len(batch) >= 3:
+        extra = batch[2]
+        if isinstance(extra, (list, tuple)) and extra and all(isinstance(t, torch.Tensor) for t in extra):
+            return extra
+        if isinstance(extra, (list, tuple)) and not extra:
+            return []
+    return None
 
 
 def postprocess_clip_output(model_out):
@@ -111,6 +220,12 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
     data_time_m = AverageMeter()
     end = time.time()
     for i, batch in enumerate(dataloader):
+        batch = preprocess_raw_batch(batch, data['train'], args.text_type)
+        taxonomy_tokens = get_taxonomy_tokens(batch) if args.text_type != 'random' else None
+        if taxonomy_tokens == []:
+            taxonomy_tokens = None
+        if taxonomy_tokens and args.accum_freq > 1:
+            raise RuntimeError("Taxonomy hierarchy training requires --accum-freq 1 when enabled.")
         i_accum = i // args.accum_freq
         step = num_batches_per_epoch * epoch + i_accum
 
@@ -122,12 +237,15 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
             images, sci, com, taxon, sci_com, taxon_com = batch
             random.seed(step)
             texts = random.choice([sci, com, taxon, sci_com, taxon_com])
+            base_batch_size = images.shape[0]
         else:
-            images, texts = batch
+            images, texts = extract_images_and_texts(batch)
+            base_batch_size = images.shape[0]
 
         if "continual" in data:
             continual_batch = continual_loader.next()
-            continual_images, continual_texts = continual_batch
+            continual_batch = preprocess_raw_batch(continual_batch, data['continual'], args.continual_text_type)
+            continual_images, continual_texts = extract_images_and_texts(continual_batch)
             images = torch.cat((images, continual_images), dim=0)
             texts = torch.cat((texts, continual_texts), dim=0)
 
@@ -137,19 +255,53 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
         data_time_m.update(time.time() - end)
         optimizer.zero_grad()
 
+        taxonomy_only = getattr(args, "taxonomy_loss_only", False)
+
         if args.accum_freq == 1:
             with autocast():
-                model_out = model(images, texts)
-                logit_scale = model_out["logit_scale"]
-                if args.distill:
-                    with torch.no_grad():
-                        dist_model_out = dist_model(images, texts)
-                    model_out.update({f'dist_{k}': v for k, v in dist_model_out.items()})
-                if "continual" in data:
-                    model_out["continual_len"] = len(continual_images)
-                losses = loss(**model_out, output_dict=True)
-
-                total_loss = sum(losses.values())
+                if taxonomy_only and args.text_type == "level":
+                    encode_model = unwrap_model(model)
+                    if hasattr(encode_model, "_orig_mod"):
+                        encode_model = encode_model._orig_mod
+                    image_features = encode_model.encode_image(images, normalize=True)
+                    if isinstance(image_features, (tuple, list)):
+                        image_features = image_features[0]
+                    if hasattr(encode_model, "logit_scale"):
+                        logit_scale = encode_model.logit_scale.exp()
+                    else:
+                        logit_scale = torch.tensor(1.0, device=image_features.device)
+                    losses = {}
+                    total_loss = image_features.new_tensor(0.0)
+                else:
+                    model_out = model(images, texts)
+                    logit_scale = model_out["logit_scale"]
+                    if args.distill:
+                        with torch.no_grad():
+                            dist_model_out = dist_model(images, texts)
+                        model_out.update({f'dist_{k}': v for k, v in dist_model_out.items()})
+                    if "continual" in data:
+                        model_out["continual_len"] = len(continual_images)
+                    image_features = model_out["image_features"]
+                    if taxonomy_only:
+                        losses = {}
+                        total_loss = image_features.new_tensor(0.0)
+                    else:
+                        losses = loss(**model_out, output_dict=True)
+                        total_loss = sum(losses.values())
+                taxonomy_loss = 0.0
+                taxonomy_logs = {}
+                if taxonomy_tokens:
+                    taxonomy_image_features = image_features[:base_batch_size]
+                    taxonomy_loss, taxonomy_logs = compute_taxonomy_losses(
+                        model,
+                        taxonomy_image_features,
+                        taxonomy_tokens,
+                        logit_scale,
+                        device,
+                        autocast,
+                    )
+                total_loss = total_loss + taxonomy_loss
+                losses.update(taxonomy_logs)
                 losses["loss"] = total_loss
 
             backward(total_loss, scaler)
@@ -247,6 +399,10 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
                 losses_m[key].update(val.item(), batch_size)
 
             logit_scale_scalar = logit_scale.item()
+            curv_scalar = None
+            base_model = unwrap_model(model)
+            if hasattr(base_model, "curv"):
+                curv_scalar = base_model.curv.exp().item()
             loss_log = " ".join(
                 [
                     f"{loss_name.capitalize()}: {loss_m.val:#.5g} ({loss_m.avg:#.5g})" 
@@ -260,7 +416,9 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
                 f"Data (t): {data_time_m.avg:.3f} "
                 f"Batch (t): {batch_time_m.avg:.3f}, {samples_per_second:#g}/s, {samples_per_second_per_gpu:#g}/s/gpu "
                 f"LR: {optimizer.param_groups[0]['lr']:5f} "
-                f"Logit Scale: {logit_scale_scalar:.3f} " + loss_log
+                f"Logit Scale: {logit_scale_scalar:.3f} " +
+                (f"Curv: {curv_scalar:.5f} " if curv_scalar is not None else "") +
+                loss_log
             )
 
             # Save train loss / etc. Using non avg meter values as loggers have their own smoothing
@@ -272,6 +430,8 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
                 "scale": logit_scale_scalar,
                 "lr": optimizer.param_groups[0]["lr"]
             }            
+            if curv_scalar is not None:
+                log_data["curv"] = curv_scalar
             log_data.update({name:val.val for name,val in losses_m.items()})
 
             log_data = {"train/" + name: val for name, val in log_data.items()}
@@ -314,12 +474,13 @@ def evaluate(model, data, epoch, args, tb_writer=None, tokenizer=None):
         cumulative_gen_loss = 0.0
         with torch.inference_mode():
             for i, batch in enumerate(dataloader):
+                batch = preprocess_raw_batch(batch, data['val'], args.text_type)
                 if args.text_type == 'random':
                     images, sci, com, taxon, sci_com, taxon_com = batch
                     random.seed(i)
                     texts = random.choice([sci, com, taxon, sci_com, taxon_com])
                 else:
-                    images, texts = batch
+                    images, texts = extract_images_and_texts(batch)
                 images = images.to(device=device, dtype=input_dtype, non_blocking=True)
                 texts = texts.to(device=device, non_blocking=True)
 

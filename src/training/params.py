@@ -72,6 +72,30 @@ def parse_args(args):
         help="Which type of dataset to process."
     )
     parser.add_argument(
+        "--taxonomy-label-count",
+        type=int,
+        default=None,
+        help="If set, only keep captions that start with 'a photo of' followed by exactly this many labels."
+    )
+    parser.add_argument(
+        "--taxonomy-hierarchy",
+        action="store_true",
+        default=False,
+        help="If set, also emit hierarchical taxonomy prompts (an image of A, an image of A B, ...) for filtered captions."
+    )
+    parser.add_argument(
+        "--taxonomy-loss-only",
+        action="store_true",
+        default=False,
+        help="Use only the taxonomy hierarchy loss; implies raw dataloader + taxonomy label filtering."
+    )
+    parser.add_argument(
+        "--dataloader-raw",
+        action="store_true",
+        default=False,
+        help="If true, WebDataset loaders yield raw PIL images and text, and preprocessing happens in the training loop."
+    )
+    parser.add_argument(
         "--dataset-resampled",
         default=False,
         action="store_true",
@@ -489,10 +513,113 @@ def parse_args(args):
         help='A string to specify a specific distributed loss implementation.'
     )
     parser.add_argument(
+        "--use-hyperbolic",
+        action="store_true",
+        default=False,
+        help="If set, use hyperbolic (Lorentz) embeddings and distances."
+    )
+    parser.add_argument(
+        "--hyperbolic-load-nonstrict",
+        action="store_true",
+        default=False,
+        help="If set with --use-hyperbolic, allow non-strict checkpoint loading."
+    )
+    parser.add_argument(
+        "--hyperbolic-warmup-epochs",
+        type=int,
+        default=0,
+        help="If >0 with --use-hyperbolic, run this many epochs in Euclidean mode before switching."
+    )
+    parser.add_argument(
+        "--hyperbolic-curv-init",
+        type=float,
+        default=1.0,
+        help="Initial curvature value for hyperbolic embeddings."
+    )
+    parser.add_argument(
+        "--hyperbolic-learn-curv",
+        type=int,
+        choices=[0, 1],
+        default=1,
+        help="Whether to learn curvature (1) or keep it fixed (0)."
+    )
+    parser.add_argument(
+        "--hyperbolic-curv-lr-mult",
+        type=float,
+        default=10.0,
+        help="Learning rate multiplier for the curvature parameter when hyperbolic is enabled."
+    )
+    parser.add_argument(
+        "--hyperbolic-similarity",
+        type=str,
+        choices=["dist", "angle"],
+        default="dist",
+        help="Hyperbolic similarity for logits: dist (negative distance) or angle (negative oxy angle).",
+    )
+    parser.add_argument(
+        "--weights-only",
+        type=int,
+        choices=[0, 1],
+        default=1,
+        help="Use weights_only=True when loading checkpoints (1) or allow full pickle (0)."
+    )
+    parser.add_argument(
         "--text_type",
         type=str,
         default='taxon',
         help="Text type of annotation for text encoder.",
+    )
+    parser.add_argument(
+        "--precomputed-taxonomy-levels",
+        action="store_true",
+        help="Use precomputed taxonomy level lists from the dataset instead of building them on the fly.",
+    )
+    parser.add_argument(
+        "--taxonomy-levels-key",
+        type=str,
+        default="taxonomy_levels.json",
+        help="Key/filename in the webdataset tar that stores taxonomy level lists.",
+    )
+    parser.add_argument(
+        "--taxonomy-image-weighting",
+        type=str,
+        choices=["balanced", "standard"],
+        default="standard",
+        help="Image-side weighting for taxonomy loss (balanced=group-balanced, standard=original).",
+    )
+    parser.add_argument(
+        "--taxonomy-group-same-text",
+        type=int,
+        choices=[0, 1],
+        default=1,
+        help="Ablation: 1 groups identical text labels in a batch; 0 treats each text independently.",
+    )
+    parser.add_argument(
+        "--taxonomy-compare-same-level",
+        type=int,
+        choices=[0, 1],
+        default=1,
+        help="Ablation: 1 compares within each taxonomy level; 0 compares against a cross-level text bank.",
+    )
+    parser.add_argument(
+        "--taxonomy-use-all-level-data",
+        type=int,
+        choices=[0, 1],
+        default=1,
+        help="Ablation: 1 uses all taxonomy levels for loss; 0 uses a single level (see --taxonomy-single-level-index).",
+    )
+    parser.add_argument(
+        "--taxonomy-single-level-index",
+        type=int,
+        default=-1,
+        help="Level index used when --taxonomy-use-all-level-data 0. If <0, pick a random level each step.",
+    )
+    parser.add_argument(
+        "--taxonomy-log-directional-loss",
+        type=int,
+        choices=[0, 1],
+        default=0,
+        help="If 1, log taxonomy image->text and text->image losses per level plus overall.",
     )
     parser.add_argument(
         "--continual_text_type",
@@ -501,6 +628,18 @@ def parse_args(args):
         help="Text type of annotation for text encoder.",
     )
     args = parser.parse_args(args)
+
+    if args.text_type == "level":
+        args.dataloader_raw = True
+        args.taxonomy_hierarchy = True
+        args.precomputed_taxonomy_levels = True
+        args.taxonomy_levels_key = "taxonomy_levels.txt"
+
+    if args.taxonomy_loss_only:
+        args.dataloader_raw = True
+        args.taxonomy_hierarchy = True
+        if not args.precomputed_taxonomy_levels and args.taxonomy_label_count is None:
+            args.taxonomy_label_count = 7
 
     if 'timm' not in args.opt:
         # set default opt params based on model name (only if timm optimizer not used)
