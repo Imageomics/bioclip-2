@@ -18,13 +18,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${REPO_ROOT}"
 
-TRAIN_DATA='/path/to/train/shards/shard-{000000..000031}.tar'
-VAL_DATA='/path/to/val/shards/shard-{000000..000031}.tar'
+TRAIN_DATA='/path/to/train/shards/xxx.tar'
+VAL_DATA='/path/to/val/shards/xxx.tar'
 PRETRAINED='[checkpoint-path]'
-LOG_DIR='./logs_renewed'
+LOG_DIR='./logs'
 
 MODEL_TYPE='ViT-B-16'
-BATCH_SIZE=3078
+BATCH_SIZE=4096
 WORKERS=8
 EPOCHS=80
 LR=1e-4
@@ -35,9 +35,6 @@ USE_HYPERBOLIC=0
 HYPERBOLIC_SIMILARITY='dist'
 HYPERBOLIC_CURV_INIT=1
 HYPERBOLIC_LEARN_CURV=0
-HYPERBOLIC_WARMUP_EPOCHS=0
-
-TAXONOMY_IMAGE_WEIGHTING='standard'
 
 CMD=(
   torchrun --nproc_per_node 4
@@ -62,13 +59,9 @@ CMD=(
   --gather-with-grad
   --grad-checkpointing
   --logs "${LOG_DIR}"
-  --taxonomy-loss-only
-  --taxonomy-compare-same-level 1
-  --taxonomy-use-all-level-data 1
-  --taxonomy-group-same-text 1
-  --taxonomy-image-weighting "${TAXONOMY_IMAGE_WEIGHTING}"
+  --taxonomy-all-levels
   --val-frequency 0
-  --weights-only 0
+  --no-weights-only
   --torchcompile
 )
 
@@ -77,10 +70,11 @@ if [[ "${USE_HYPERBOLIC}" == "1" ]]; then
     --use-hyperbolic
     --hyperbolic-load-nonstrict
     --hyperbolic-curv-init "${HYPERBOLIC_CURV_INIT}"
-    --hyperbolic-learn-curv "${HYPERBOLIC_LEARN_CURV}"
-    --hyperbolic-warmup-epochs "${HYPERBOLIC_WARMUP_EPOCHS}"
     --hyperbolic-similarity "${HYPERBOLIC_SIMILARITY}"
   )
+  if [[ "${HYPERBOLIC_LEARN_CURV}" == "0" ]]; then
+    CMD+=(--no-hyperbolic-learn-curv)
+  fi
 fi
 
 echo "[INFO] ${CMD[*]}"

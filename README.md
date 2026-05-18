@@ -28,7 +28,7 @@ The current setup is intended to support the main experiments described in the h
 The main additions in this repository are:
 - taxonomy-only training via `--taxonomy-loss-only`
 - level-restricted comparisons via `--taxonomy-compare-same-level`
-- all-level training via `--taxonomy-use-all-level-data`
+- paper-style multi-level training via `--taxonomy-all-levels`
 - configurable taxonomy image-side weighting via `--taxonomy-image-weighting`
 - hyperbolic CLIP support via `--use-hyperbolic`
 - hierarchical evaluation scripts for both unrestricted coarse-to-fine and top-down constrained prediction
@@ -69,23 +69,51 @@ The script is a template. Before running it, update:
 - output log directory
 - `USE_HYPERBOLIC`
 
-### Core taxonomy-only recipe
+### Taxonomy Training Modes
 
-The main taxonomy-only configuration is:
+There are three training modes:
+
+1. Original training
+
+Do not pass any taxonomy-specific training flags.
 
 ```bash
---taxonomy-loss-only \
---taxonomy-compare-same-level 1 \
---taxonomy-use-all-level-data 1 \
---taxonomy-group-same-text 1 \
---taxonomy-image-weighting standard
+# no taxonomy flag
 ```
 
-This means:
-- use all taxonomy levels during training
-- compare each level only against text from the same level
-- merge duplicate text labels within a batch
-- use the standard taxonomy image-side weighting from the paper setup
+This keeps the original image-text contrastive training objective.
+
+2. Species-only taxonomy training
+
+```bash
+--taxonomy-loss-only
+```
+
+This switches training to taxonomy-only mode, but uses only the species level.
+It is the default taxonomy-only setting when `--taxonomy-all-levels` is not used.
+
+3. Multi-level taxonomy training
+
+```bash
+--taxonomy-all-levels
+```
+
+This is the paper-style multi-level recipe. It automatically enables:
+- taxonomy-only training
+- all taxonomy levels in the loss
+- same-level text comparison
+- grouping duplicate text labels within a batch
+
+If you need ablations, the lower-level options are still available:
+- `--taxonomy-compare-same-level`
+- `--taxonomy-group-same-text`
+- `--taxonomy-image-weighting`
+
+For example, you can still run an all-level ablation with:
+
+```bash
+--taxonomy-all-levels --no-taxonomy-compare-same-level --no-taxonomy-group-same-text
+```
 
 ### Example launcher settings
 
@@ -176,7 +204,7 @@ The repository includes a taxonomy text embedding visualization script:
 - [scripts/visualize_species_ancestors_siblings_tsne.py](scripts/visualize_species_ancestors_siblings_tsne.py)
 
 SLURM launcher:
-- [slurm/visualize_species_ancestors_siblings_tsne_euclidean.sh](slurm/visualize_species_ancestors_siblings_tsne_euclidean.sh)
+- [slurm/visualization_species_ancestors_siblings_tsne.sh](slurm/visualization_species_ancestors_siblings_tsne.sh)
 
 This tool can:
 - plot a target species together with its ancestors and sibling labels
@@ -186,7 +214,7 @@ This tool can:
 Run:
 
 ```bash
-sbatch slurm/visualize_species_ancestors_siblings_tsne_euclidean.sh
+sbatch slurm/visualization_species_ancestors_siblings_tsne.sh
 ```
 
 Before launching, update:
@@ -239,7 +267,7 @@ Important paths in this repository:
 - `slurm/train.sh`
 - `slurm/eval_which_level.sh`
 - `slurm/eval_topdown.sh`
-- `slurm/visualize_species_ancestors_siblings_tsne_euclidean.sh`
+- `slurm/visualization_species_ancestors_siblings_tsne.sh`
 - `slurm/prepare_crypticbio_eval.sh`
 - `scripts/visualize_species_ancestors_siblings_tsne.py`
 - `scripts/prepare_crypticbio_eval.py`

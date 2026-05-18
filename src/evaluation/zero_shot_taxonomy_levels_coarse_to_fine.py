@@ -39,7 +39,7 @@ LEVEL_ORDER = ["kingdom", "phylum", "cls", "order", "family", "genus", "species"
 def _parse_level_args(argv):
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--metadata-path", type=str, default=None)
-    parser.add_argument("--target-kingdom", type=str, nargs="+", default=None)
+    parser.add_argument("--target-kingdom", type=str, default=None)
     parser.add_argument(
         "--use-hyperbolic",
         action="store_true",
@@ -80,7 +80,7 @@ def _parse_level_args(argv):
     return parser.parse_known_args(argv)[0]
 
 
-def img_loader(filepath: str):
+def _load_image(filepath: str):
     try:
         return Image.open(filepath).convert("RGB")
     except Exception as e:
@@ -88,7 +88,7 @@ def img_loader(filepath: str):
         return None
 
 
-def get_dataloader(dataset, batch_size, num_workers):
+def _build_dataloader(dataset, batch_size, num_workers):
     return DataLoader(
         dataset,
         batch_size=batch_size,
@@ -97,7 +97,7 @@ def get_dataloader(dataset, batch_size, num_workers):
     )
 
 
-class IndexedDataset(torch.utils.data.Dataset):
+class _IndexedDataset(torch.utils.data.Dataset):
     def __init__(self, base_dataset, indices):
         self.base_dataset = base_dataset
         self.indices = indices
@@ -132,7 +132,7 @@ def main():
         logging.error("Error: --data-root is required.")
         sys.exit(1)
 
-    target_kingdom = args.target_kingdom[0].lower() if args.target_kingdom else None
+    target_kingdom = args.target_kingdom.lower() if args.target_kingdom else None
 
     if torch.cuda.is_available():
         torch.backends.cuda.matmul.allow_tf32 = True
@@ -307,8 +307,8 @@ def main():
         add_label("genus", rr["genus_label"])
         add_label("species", rr["species_label"])
 
-    indexed_dataset = IndexedDataset(base_dataset, selected_indices)
-    dataloader = get_dataloader(indexed_dataset, args.batch_size, args.workers)
+    indexed_dataset = _IndexedDataset(base_dataset, selected_indices)
+    dataloader = _build_dataloader(indexed_dataset, args.batch_size, args.workers)
 
     total_rows = len(selected_indices)
     if total_rows == 0:

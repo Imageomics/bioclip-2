@@ -72,7 +72,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--download-timeout", type=float, default=30.0)
     parser.add_argument(
         "--streaming",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
         default=True,
         help="Use streaming mode for large datasets (default: enabled).",
     )
@@ -94,7 +94,7 @@ def normalize_text(value: Any) -> str:
     return text
 
 
-def sanitize_filename(text: str) -> str:
+def _sanitize_filename(text: str) -> str:
     text = re.sub(r"[^A-Za-z0-9._-]+", "_", text)
     return text.strip("_") or "sample"
 
@@ -256,7 +256,7 @@ def main() -> None:
             tax = fill_taxonomy_from_row(item, ds)
             tax = ensure_species_and_class(tax, label_value)
 
-            stem = sanitize_filename(f"{i:08d}_{tax['class']}")
+            stem = _sanitize_filename(f"{i:08d}_{tax['class']}")
             rel_path = Path("images") / split_name / f"{stem}.jpg"
             abs_path = out_dir / rel_path
             img.save(abs_path, format="JPEG", quality=args.jpg_quality)

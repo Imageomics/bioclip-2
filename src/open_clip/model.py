@@ -526,25 +526,17 @@ class HyperbolicCLIP(CLIP):
         }
         self.visual_alpha = nn.Parameter(torch.tensor(embed_dim**-0.5).log())
         self.textual_alpha = nn.Parameter(torch.tensor(embed_dim**-0.5).log())
-        self.hyperbolic_enabled = True
-
     def _clamped_hyperbolic_params(self):
         curv = torch.clamp(self.curv, **self._curv_minmax)
         visual_alpha = torch.clamp(self.visual_alpha, max=0.0)
         textual_alpha = torch.clamp(self.textual_alpha, max=0.0)
         return curv, visual_alpha, textual_alpha
 
-    def set_hyperbolic_enabled(self, enabled: bool):
-        self.hyperbolic_enabled = bool(enabled)
-        self.use_hyperbolic = bool(enabled)
-
     def _project_to_hyperboloid(self, feats, scale, curv):
         scaled_feats = (feats * scale.exp()).float()
         return L.exp_map0(scaled_feats, curv.exp().float())
 
     def encode_image(self, image, normalize: bool = False):
-        if not self.hyperbolic_enabled:
-            return super().encode_image(image, normalize=True)
         curv, visual_alpha, _ = self._clamped_hyperbolic_params()
         features, continual_features = super().encode_image(image, normalize=False)
         features = self._project_to_hyperboloid(features, visual_alpha, curv)
@@ -553,15 +545,11 @@ class HyperbolicCLIP(CLIP):
         return features, continual_features
 
     def encode_text(self, text, normalize: bool = False):
-        if not self.hyperbolic_enabled:
-            return super().encode_text(text, normalize=True)
         curv, _, textual_alpha = self._clamped_hyperbolic_params()
         features = super().encode_text(text, normalize=False)
         return self._project_to_hyperboloid(features, textual_alpha, curv)
 
     def get_logits(self, image, text):
-        if not self.hyperbolic_enabled:
-            return super().get_logits(image, text)
         image_features, _ = self.encode_image(image, normalize=False)
         text_features = self.encode_text(text, normalize=False)
         curv = self.curv.exp()

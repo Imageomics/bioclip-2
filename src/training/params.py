@@ -87,7 +87,11 @@ def parse_args(args):
         "--taxonomy-loss-only",
         action="store_true",
         default=False,
-        help="Use only the taxonomy hierarchy loss; implies raw dataloader + taxonomy label filtering."
+        help=(
+            "Use taxonomy-only training instead of the original image-text contrastive loss. "
+            "By default this runs a species-only taxonomy objective. "
+            "Use --taxonomy-all-levels to switch to the multi-level recipe."
+        )
     )
     parser.add_argument(
         "--dataloader-raw",
@@ -525,12 +529,6 @@ def parse_args(args):
         help="If set with --use-hyperbolic, allow non-strict checkpoint loading."
     )
     parser.add_argument(
-        "--hyperbolic-warmup-epochs",
-        type=int,
-        default=0,
-        help="If >0 with --use-hyperbolic, run this many epochs in Euclidean mode before switching."
-    )
-    parser.add_argument(
         "--hyperbolic-curv-init",
         type=float,
         default=1.0,
@@ -538,10 +536,9 @@ def parse_args(args):
     )
     parser.add_argument(
         "--hyperbolic-learn-curv",
-        type=int,
-        choices=[0, 1],
-        default=1,
-        help="Whether to learn curvature (1) or keep it fixed (0)."
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Whether to learn curvature. Use --no-hyperbolic-learn-curv to keep it fixed."
     )
     parser.add_argument(
         "--hyperbolic-curv-lr-mult",
@@ -558,10 +555,9 @@ def parse_args(args):
     )
     parser.add_argument(
         "--weights-only",
-        type=int,
-        choices=[0, 1],
-        default=1,
-        help="Use weights_only=True when loading checkpoints (1) or allow full pickle (0)."
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Use weights_only=True when loading checkpoints. Use --no-weights-only to allow full pickle."
     )
     parser.add_argument(
         "--text_type",
@@ -589,37 +585,38 @@ def parse_args(args):
     )
     parser.add_argument(
         "--taxonomy-group-same-text",
-        type=int,
-        choices=[0, 1],
-        default=1,
-        help="Ablation: 1 groups identical text labels in a batch; 0 treats each text independently.",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Advanced taxonomy override. Group identical text labels in a batch. "
+            "Defaults to off for species-only taxonomy training and on for --taxonomy-all-levels."
+        ),
     )
     parser.add_argument(
         "--taxonomy-compare-same-level",
-        type=int,
-        choices=[0, 1],
-        default=1,
-        help="Ablation: 1 compares within each taxonomy level; 0 compares against a cross-level text bank.",
-    )
-    parser.add_argument(
-        "--taxonomy-use-all-level-data",
-        type=int,
-        choices=[0, 1],
-        default=1,
-        help="Ablation: 1 uses all taxonomy levels for loss; 0 uses a single level (see --taxonomy-single-level-index).",
-    )
-    parser.add_argument(
-        "--taxonomy-single-level-index",
-        type=int,
-        default=-1,
-        help="Level index used when --taxonomy-use-all-level-data 0. If <0, pick a random level each step.",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Advanced taxonomy override. Compare within each taxonomy level instead of "
+            "against a cross-level text bank. Defaults to off for species-only taxonomy training "
+            "and on for --taxonomy-all-levels."
+        ),
     )
     parser.add_argument(
         "--taxonomy-log-directional-loss",
-        type=int,
-        choices=[0, 1],
-        default=0,
-        help="If 1, log taxonomy image->text and text->image losses per level plus overall.",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Log taxonomy image->text and text->image losses per level plus overall.",
+    )
+    parser.add_argument(
+        "--taxonomy-all-levels",
+        action="store_true",
+        default=False,
+        help=(
+            "Enable the multi-level taxonomy training recipe used in the paper. "
+            "This implies --taxonomy-loss-only, --taxonomy-compare-same-level 1, "
+            "--taxonomy-group-same-text 1, and all-level taxonomy loss."
+        ),
     )
     parser.add_argument(
         "--continual_text_type",
@@ -634,6 +631,31 @@ def parse_args(args):
         args.taxonomy_hierarchy = True
         args.precomputed_taxonomy_levels = True
         args.taxonomy_levels_key = "taxonomy_levels.txt"
+
+    # Internal taxonomy selectors used by the loss implementation.
+    args.taxonomy_use_all_level_data = False
+    args.taxonomy_single_level_index = 6
+
+    if args.taxonomy_all_levels:
+        args.taxonomy_loss_only = True
+        args.taxonomy_use_all_level_data = True
+        args.taxonomy_single_level_index = -1
+        if args.taxonomy_compare_same_level is None:
+            args.taxonomy_compare_same_level = True
+        if args.taxonomy_group_same_text is None:
+            args.taxonomy_group_same_text = True
+    elif args.taxonomy_loss_only:
+        args.taxonomy_use_all_level_data = False
+        args.taxonomy_single_level_index = 6
+        if args.taxonomy_compare_same_level is None:
+            args.taxonomy_compare_same_level = False
+        if args.taxonomy_group_same_text is None:
+            args.taxonomy_group_same_text = False
+    else:
+        if args.taxonomy_compare_same_level is None:
+            args.taxonomy_compare_same_level = False
+        if args.taxonomy_group_same_text is None:
+            args.taxonomy_group_same_text = False
 
     if args.taxonomy_loss_only:
         args.dataloader_raw = True

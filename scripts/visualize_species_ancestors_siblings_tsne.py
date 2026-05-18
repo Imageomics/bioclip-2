@@ -50,7 +50,7 @@ COLORS = {
 
 
 @dataclass
-class Node:
+class TaxonomyNode:
     idx: int
     level: str
     label: str
@@ -183,8 +183,10 @@ def top_labels_with_anchor(series: pd.Series, k: int, anchor: str) -> List[str]:
     return sorted(set(out))
 
 
-def build_nodes(df: pd.DataFrame, lineage: Dict[str, str], max_siblings_per_level: int) -> List[Node]:
-    nodes: List[Node] = []
+def build_nodes(
+    df: pd.DataFrame, lineage: Dict[str, str], max_siblings_per_level: int
+) -> List[TaxonomyNode]:
+    nodes: List[TaxonomyNode] = []
 
     for level_i, level in enumerate(LEVELS):
         if level == "kingdom":
@@ -202,7 +204,7 @@ def build_nodes(df: pd.DataFrame, lineage: Dict[str, str], max_siblings_per_leve
             prompt = "An image of " + ", ".join(prompt_parts)
             is_ancestor = label == lineage[level]
             nodes.append(
-                Node(
+                TaxonomyNode(
                     idx=len(nodes),
                     level=level,
                     label=label,
@@ -267,7 +269,7 @@ def run_tsne(dist: np.ndarray, perplexity: float, n_iter: int, seed: int) -> np.
     return TSNE(**kwargs).fit_transform(dist)
 
 
-def sanitize_name(s: str) -> str:
+def _sanitize_name(s: str) -> str:
     s = s.strip().lower()
     s = re.sub(r"[^a-z0-9]+", "_", s)
     return s.strip("_") or "species"
@@ -275,7 +277,7 @@ def sanitize_name(s: str) -> str:
 
 def plot_result(
     xy_list: List[np.ndarray],
-    nodes: List[Node],
+    nodes: List[TaxonomyNode],
     out_png: str,
     panel_names: List[str] | None = None,
     panel_title_fontsize: int = 20,
@@ -455,7 +457,7 @@ def main() -> None:
         if device == "cuda":
             torch.cuda.empty_cache()
 
-    base = sanitize_name(args.species_binomial)
+    base = _sanitize_name(args.species_binomial)
     out_png = os.path.join(args.logs, f"{base}_ancestors_siblings_tsne.png")
     plot_result(
         xy_list,
@@ -467,7 +469,7 @@ def main() -> None:
     logging.info("Saved plot: %s", out_png)
 
     for panel_name, xy in zip(panel_names, xy_list):
-        panel_slug = sanitize_name(panel_name)
+        panel_slug = _sanitize_name(panel_name)
         out_csv = os.path.join(args.logs, f"{base}_ancestors_siblings_nodes_{panel_slug}.csv")
         pd.DataFrame(
             {

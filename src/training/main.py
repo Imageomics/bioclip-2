@@ -254,12 +254,12 @@ def main(args):
     for candidate in (model, getattr(model, "module", None), getattr(model, "_orig_mod", None)):
         if candidate is not None:
             setattr(candidate, "hyperbolic_similarity", hyperbolic_similarity)
-            setattr(candidate, "taxonomy_image_weighting", getattr(args, "taxonomy_image_weighting", "balanced"))
-            setattr(candidate, "taxonomy_group_same_text", bool(getattr(args, "taxonomy_group_same_text", 1)))
-            setattr(candidate, "taxonomy_compare_same_level", bool(getattr(args, "taxonomy_compare_same_level", 1)))
-            setattr(candidate, "taxonomy_use_all_level_data", bool(getattr(args, "taxonomy_use_all_level_data", 1)))
+            setattr(candidate, "taxonomy_image_weighting", getattr(args, "taxonomy_image_weighting", "standard"))
+            setattr(candidate, "taxonomy_group_same_text", bool(getattr(args, "taxonomy_group_same_text", False)))
+            setattr(candidate, "taxonomy_compare_same_level", bool(getattr(args, "taxonomy_compare_same_level", False)))
+            setattr(candidate, "taxonomy_use_all_level_data", bool(getattr(args, "taxonomy_use_all_level_data", False)))
             setattr(candidate, "taxonomy_single_level_index", int(getattr(args, "taxonomy_single_level_index", -1)))
-            setattr(candidate, "taxonomy_log_directional_loss", bool(getattr(args, "taxonomy_log_directional_loss", 0)))
+            setattr(candidate, "taxonomy_log_directional_loss", bool(getattr(args, "taxonomy_log_directional_loss", False)))
     if args.distill:
         # FIXME: currently assumes the model you're distilling from has the same tokenizer & transforms.
         dist_model, _, _ = create_model_and_transforms(
@@ -315,8 +315,6 @@ def main(args):
         if args.use_bn_sync:
             model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
         ddp_args = {}
-        if getattr(args, "use_hyperbolic", False) and getattr(args, "hyperbolic_warmup_epochs", 0) > 0:
-            ddp_args["find_unused_parameters"] = True
         if args.ddp_static_graph:
             # this doesn't exist in older PyTorch, arg only added if enabled
             ddp_args['static_graph'] = True
@@ -518,23 +516,9 @@ def main(args):
 
     loss = create_loss(args)
 
-    def _set_hyperbolic_enabled(target_model, enabled):
-        candidates = (
-            target_model,
-            getattr(target_model, "module", None),
-            getattr(target_model, "_orig_mod", None),
-        )
-        for candidate in candidates:
-            if candidate is not None and hasattr(candidate, "set_hyperbolic_enabled"):
-                candidate.set_hyperbolic_enabled(enabled)
-                return
-
     for epoch in range(start_epoch, args.epochs):
         if is_master(args):
             logging.info(f'Start epoch {epoch}')
-
-        if getattr(args, "use_hyperbolic", False) and args.hyperbolic_warmup_epochs > 0:
-            _set_hyperbolic_enabled(model, epoch >= args.hyperbolic_warmup_epochs)
 
         train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist_model, args, tb_writer=writer)
         completed_epoch = epoch + 1

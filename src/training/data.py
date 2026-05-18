@@ -202,7 +202,7 @@ def _coerce_text_value(text_value):
     return str(text_value)
 
 
-def extract_taxonomy_labels(text_value, prefix="a photo of "):
+def _extract_taxonomy_labels(text_value, prefix="a photo of "):
     if isinstance(text_value, (list, tuple)):
         if not text_value:
             return None
@@ -222,21 +222,21 @@ def extract_taxonomy_labels(text_value, prefix="a photo of "):
     return labels or None
 
 
-def filter_caption_label_count(sample, text_key='text', label_count=7):
+def _filter_caption_label_count(sample, text_key='text', label_count=7):
     text_value = sample.get(text_key)
     if text_value is None:
         return False
-    labels = extract_taxonomy_labels(text_value)
+    labels = _extract_taxonomy_labels(text_value)
     if labels is None:
         return False
     return len(labels) == label_count
 
 
-def add_taxonomy_hierarchy(sample, text_key='text', output_key='taxonomy_levels', output_prefix='an image of '):
+def _add_taxonomy_hierarchy(sample, text_key='text', output_key='taxonomy_levels', output_prefix='an image of '):
     text_value = sample.get(text_key)
     if text_value is None:
         return sample
-    labels = extract_taxonomy_labels(text_value)
+    labels = _extract_taxonomy_labels(text_value)
     if not labels:
         return sample
     running = []
@@ -248,7 +248,7 @@ def add_taxonomy_hierarchy(sample, text_key='text', output_key='taxonomy_levels'
     return sample
 
 
-def load_taxonomy_levels(sample, key="taxonomy_levels", output_key="taxonomy_levels"):
+def _load_taxonomy_levels(sample, key="taxonomy_levels", output_key="taxonomy_levels"):
     value = sample.get(key)
     if value is None:
         return sample
@@ -267,7 +267,7 @@ def load_taxonomy_levels(sample, key="taxonomy_levels", output_key="taxonomy_lev
     return sample
 
 
-def ensure_taxonomy_levels(sample, fallback_key=None, output_key="taxonomy_levels"):
+def _ensure_taxonomy_levels(sample, fallback_key=None, output_key="taxonomy_levels"):
     if output_key in sample:
         return sample
     if fallback_key and fallback_key in sample:
@@ -545,18 +545,18 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
     label_count = getattr(args, 'taxonomy_label_count', None)
     if label_count is not None and text_filter_key is not None:
         taxonomy_filter = partial(
-            filter_caption_label_count,
+            _filter_caption_label_count,
             text_key=text_filter_key,
             label_count=label_count,
         )
         pipeline.append(wds.select(taxonomy_filter))
 
     if use_taxonomy_hierarchy and not use_precomputed_levels and text_filter_key is not None:
-        pipeline.append(wds.map(partial(add_taxonomy_hierarchy, text_key=text_filter_key)))
+        pipeline.append(wds.map(partial(_add_taxonomy_hierarchy, text_key=text_filter_key)))
 
     if use_taxonomy_hierarchy and use_precomputed_levels and taxonomy_levels_key:
-        pipeline.append(wds.map(partial(ensure_taxonomy_levels, fallback_key=taxonomy_levels_key)))
-        pipeline.append(wds.map(partial(load_taxonomy_levels, key="taxonomy_levels")))
+        pipeline.append(wds.map(partial(_ensure_taxonomy_levels, fallback_key=taxonomy_levels_key)))
+        pipeline.append(wds.map(partial(_load_taxonomy_levels, key="taxonomy_levels")))
 
     if use_taxonomy_hierarchy and raw_samples and text_filter_key is not None and text_type != "level":
         tuple_keys = tuple_keys + ("taxonomy_levels",)
