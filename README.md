@@ -1,9 +1,9 @@
-# BioCLIP 2  [![DOI](https://zenodo.org/badge/991449538.svg)](https://doi.org/10.5281/zenodo.15644363)
+# BioCLIP 2  [![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.15644363-blue)](https://doi.org/10.5281/zenodo.15644363)
 
 This repository contains the code for [BioCLIP 2](https://huggingface.co/imageomics/bioclip-2) training and evaluation (testing and visualizing embeddings). We developed this repository based on [BioCLIP](https://github.com/imageomics/BioCLIP) and [OpenCLIP](https://github.com/mlfoundations/open_clip).
 BioCLIP 2 is trained on the [TreeOfLife-200M dataset](https://huggingface.co/datasets/imageomics/TreeOfLife-200M) and achieves state-of-the-art performance on both species classification and other biological visual tasks. The BioCLIP 2 website is hosted from the `gh-pages` branch of this repository.
 
-[Paper](https://doi.org/10.48550/arXiv.2505.23883) | [Model](https://huggingface.co/imageomics/bioclip-2) | [Data](https://huggingface.co/datasets/imageomics/TreeOfLife-200M) | [Demo](https://huggingface.co/spaces/imageomics/bioclip-2-demo)
+[Paper](https://proceedings.neurips.cc/paper_files/paper/2025/hash/94da80cbfe870c1db958c88a8a27018c-Abstract-Conference.html) | [Model](https://huggingface.co/imageomics/bioclip-2) | [Data](https://huggingface.co/datasets/imageomics/TreeOfLife-200M) | [Demo](https://huggingface.co/spaces/imageomics/bioclip-2-demo)
 ---
 
 BioCLIP 2 is a CLIP model trained on a new 200M-image dataset of biological organisms with fine-grained taxonomic labels.
@@ -75,7 +75,7 @@ sbatch slurm/eval_other.sh
 
 <h2 id="paper">Paper, Website, and Data</h2>
 
-We have a preprint on [arXiv](https://doi.org/10.48550/arXiv.2505.23883) and a [project website](https://imageomics.github.io/bioclip-2/).
+The paper is in [NeurIPS 2025 proceedings](https://proceedings.neurips.cc/paper_files/paper/2025/hash/94da80cbfe870c1db958c88a8a27018c-Abstract-Conference.html). We also have a preprint on [arXiv](https://doi.org/10.48550/arXiv.2505.23883) and a [project website](https://imageomics.github.io/bioclip-2/).
 
 Our data is published on Hugging Face: [TreeOfLife-200M](https://huggingface.co/datasets/imageomics/TreeOfLife-200M) and [IDLE-OO Camera Traps](https://huggingface.co/datasets/imageomics/IDLE-OO-Camera-Traps). Step-by-step download instructions for TreeOfLife-200M are available in [TreeOfLife-toolbox](https://github.com/Imageomics/TreeOfLife-toolbox/tree/main/docs#treeoflife200m-dataset-download-guide).
 
@@ -84,14 +84,16 @@ Our data is published on Hugging Face: [TreeOfLife-200M](https://huggingface.co/
 Please cite our papers and the associated repositories if you use our code or results.
 
 ```
-@article{gu2025bioclip,
-  title = {{B}io{CLIP} 2: Emergent Properties from Scaling Hierarchical Contrastive Learning}, 
-  author = {Jianyang Gu and Samuel Stevens and Elizabeth G Campolongo and Matthew J Thompson and Net Zhang and Jiaman Wu and Andrei Kopanev and Zheda Mai and Alexander E. White and James Balhoff and Wasila M Dahdul and Daniel Rubenstein and Hilmar Lapp and Tanya Berger-Wolf and Wei-Lun Chao and Yu Su},
-  year = {2025},
-  eprint={2505.23883},
-  archivePrefix={arXiv},
-  primaryClass={cs.CV},
-  url={https://arxiv.org/abs/2505.23883}, 
+@inproceedings{NEURIPS2025_94da80cb,
+ author = {Gu, Jianyang and Stevens, Sam and Campolongo, Elizabeth and Thompson, Matthew and Zhang, Net and Wu, Jiaman and Kopanev, Andrei and Mai, Zheda and White, Alexander and Balhoff, James and Dahdul, Wasila and Rubenstein, Daniel and Lapp, Hilmar and Berger-Wolf, Tanya and Chao, Wei-Lun (Harry) and Su, Yu},
+ booktitle = {Advances in Neural Information Processing Systems},
+ editor = {D. Belgrave and C. Zhang and H. Lin and R. Pascanu and P. Koniusz and M. Ghassemi and N. Chen},
+ pages = {102778--102811},
+ publisher = {Curran Associates, Inc.},
+ title = {BioCLIP 2: Emergent Properties from Scaling Hierarchical Contrastive Learning},
+ url = {https://proceedings.neurips.cc/paper_files/paper/2025/file/94da80cbfe870c1db958c88a8a27018c-Paper-Conference.pdf},
+ volume = {38},
+ year = {2025}
 }
  ```
 
