@@ -4,6 +4,7 @@ import itertools
 import json
 import logging
 import math
+import multiprocessing
 import os
 import random
 import sys
@@ -621,8 +622,8 @@ def lance_wds_shuffle(data, bufsize, initial, rng):
 
 
 def lance_epoch_arithmetic(num_samples, batch_size, world_size, workers, floor=False):
-    """The padded-epoch arithmetic of get_wds_dataset (lines 'roll over and repeat ...'), factored out so the
-    Lance path and the unit test use the identical formula.  NOTE --workers changes the epoch length
+    """The padded-epoch arithmetic of get_wds_dataset (lines 'roll over and repeat ...'), factored out for the
+    Lance path; keep it identical to the inline formula there.  NOTE --workers changes the epoch length
     (e.g. 956,203 rows, 4096 x 4: workers 8 -> 64 batches, 12 -> 60, 16 -> 64, 20 -> 60, 24 -> 72)."""
     round_fn = math.floor if floor else math.ceil
     global_batch_size = batch_size * world_size
@@ -633,21 +634,9 @@ def lance_epoch_arithmetic(num_samples, batch_size, world_size, workers, floor=F
     return num_batches, num_worker_batches, num_batches * global_batch_size
 
 
-def lance_dataset_info(uri):
-    """(num_rows, columns, shards=[(name, rows, row_offset), ...], source, manifest) for a v1 Lance dataset.
-
-    Prefers the plain-JSON manifest wds_to_lance.py writes next to the dataset (<uri>.manifest.json), so the
-    parent process never imports lance before forking DataLoader workers.  Falls back to opening the dataset,
-    scanning the source_shard column and synthesizing the manifest fields from the schema metadata (so the
-    partial/verify checks still apply), then drops the handle."""
-    uri = uri.rstrip('/')
-    manifest = uri + ".manifest.json"
-    if os.path.exists(manifest):
-        with open(manifest) as f:
-            m = json.load(f)
-        shards = [(s["name"], int(s["rows"]), int(s["offset"])) for s in m["shards"]]
-        return int(m["num_rows"]), list(m["columns"]), shards, manifest, m
-    logging.warning(f"{manifest} not found; opening {uri} in the parent process to read its size and shard layout")
+def _lance_scan_layout(uri):
+    """(num_rows, columns, shards, schema_metadata) read from the dataset itself.  Runs in a short-lived spawned
+    process (see lance_dataset_info): lance is not fork-safe, so it must never be imported in the parent."""
     import lance
     ds = lance.dataset(uri)
     num_rows = ds.count_rows()
@@ -657,8 +646,26 @@ def lance_dataset_info(uri):
     starts = np.concatenate([[0], change]).astype(int)
     ends = np.concatenate([change, [len(sh)]]).astype(int)
     shards = [(str(sh[s]), int(e - s), int(s)) for s, e in zip(starts, ends)]
-    md = dict(ds.schema_metadata)
-    del sh, ds
+    return num_rows, columns, shards, dict(ds.schema_metadata)
+
+
+def lance_dataset_info(uri):
+    """(num_rows, columns, shards=[(name, rows, row_offset), ...], source, manifest) for a v1 Lance dataset.
+
+    Prefers the plain-JSON manifest wds_to_lance.py writes next to the dataset (<uri>.manifest.json).  Without
+    it (a copy that left the manifest behind, or a remote URI), the dataset is scanned in a spawned helper
+    process and the manifest fields are synthesized from the schema metadata (so the partial/verify checks
+    still apply).  Either way the parent process never imports lance before forking DataLoader workers."""
+    uri = uri.rstrip('/')
+    manifest = uri + ".manifest.json"
+    if os.path.exists(manifest):
+        with open(manifest) as f:
+            m = json.load(f)
+        shards = [(s["name"], int(s["rows"]), int(s["offset"])) for s in m["shards"]]
+        return int(m["num_rows"]), list(m["columns"]), shards, manifest, m
+    logging.warning(f"{manifest} not found; scanning {uri} in a spawned helper process to read its size and shard layout")
+    with multiprocessing.get_context("spawn").Pool(1) as pool:
+        num_rows, columns, shards, md = pool.apply(_lance_scan_layout, (uri,))
     synth = None
     if md.get("tol.spec"):  # written by wds_to_lance.py: rebuild what the manifest would have said
         def _int(k):
