@@ -67,9 +67,66 @@ def parse_args(args):
     )
     parser.add_argument(
         "--dataset-type",
-        choices=["webdataset", "csv", "synthetic", "auto"],
+        choices=["webdataset", "csv", "synthetic", "lance", "auto"],
         default="auto",
-        help="Which type of dataset to process."
+        help="Which type of dataset to process. 'lance' reads a v1 verbatim *.lance dataset written by the "
+             "wds_to_lance.py converter (one column per tar member; get_lance_dataset in data.py); it needs "
+             "`pip install pylance`."
+    )
+    parser.add_argument(
+        "--continual-dataset-type",
+        choices=["webdataset", "csv", "synthetic", "lance", "auto"],
+        default=None,
+        help="Dataset type of --continual-data (the LAION replay stream). Default: same as --dataset-type. "
+             "Set it to 'webdataset' to keep the replay stream on tars while --dataset-type is lance."
+    )
+    # ---- --dataset-type lance ----------------------------------------------------------------
+    parser.add_argument(
+        "--lance-sampler",
+        choices=["wds", "chunked", "global"],
+        default="wds",
+        help="Train-time sampling for --dataset-type lance. 'wds' (default, fidelity): replay the webdataset "
+             "sampling process on row ids (shards with replacement under --dataset-resampled, single-shard "
+             "streams, the 5000-sample shuffle buffer, per-worker batch streams) so batch composition matches the "
+             "webdataset run. 'chunked': seeded per-epoch permutation within contiguous chunks of "
+             "--lance-shuffle-chunk rows. 'global': one seeded global permutation per epoch (a different, "
+             "better-mixed sampler; not like-for-like)."
+    )
+    parser.add_argument(
+        "--lance-shuffle-chunk",
+        type=int,
+        default=32768,
+        help="For --lance-sampler chunked: rows are shuffled within contiguous chunks of this many tar-order rows "
+             "(0 = global). 32768 ~ one train_small shard (29.3k rows); measured on real shards, that is the "
+             "chunk whose unique-species-per-batch count is closest to the webdataset pipeline's."
+    )
+    parser.add_argument(
+        "--lance-shuffle-buffer",
+        type=int,
+        default=5000,
+        help="For --lance-sampler wds: sample shuffle buffer size (webdataset's _SAMPLE_SHUFFLE_SIZE = 5000; initial "
+             "fill min(1000, buffer)). Must be >= 1. Lower it only for toy datasets whose shards are smaller than it."
+    )
+    parser.add_argument(
+        "--lance-allow-partial",
+        default=False,
+        action="store_true",
+        help="Train on a Lance dataset whose manifest says it is partial (--allow-partial-commit or --limit-rows). "
+             "Off by default because a partial dataset changes the epoch length and LR schedule."
+    )
+    parser.add_argument(
+        "--lance-mp-context",
+        choices=["fork", "spawn", "forkserver"],
+        default="fork",
+        help="DataLoader worker start method for --dataset-type lance. Default fork, like the webdataset arm "
+             "(the Lance handle is opened lazily inside each worker, never in the parent)."
+    )
+    parser.add_argument(
+        "--lance-pin-memory",
+        default=False,
+        action="store_true",
+        help="pin_memory=True for the Lance DataLoader. Off by default because webdataset's WebLoader never pins "
+             "(a format-independent throughput lever; it does not change the numerics)."
     )
     parser.add_argument(
         "--dataset-resampled",
