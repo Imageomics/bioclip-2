@@ -43,6 +43,8 @@ To train the model, run:
 sbatch slurm/train.sh
 ```
 
+To train from Lance datasets instead of webdataset tar shards, see [docs/lance.md](docs/lance.md).
+
 ### Evaluation
 **Species classification**
 
