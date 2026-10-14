@@ -564,7 +564,7 @@ def _lance_collate(batch):
 
 
 class LanceDataset(Dataset):
-    """A Lance dataset written by wds_to_lance.py: one column per webdataset tar member.
+    """A Lance dataset with one column per webdataset tar member.
 
     The batch sampler hands a whole batch of row ids to __getitems__, which reads, decodes, transforms and
     tokenizes them inside the DataLoader worker, as the webdataset pipeline does.
@@ -651,7 +651,7 @@ class LanceValBatchSampler(torch.utils.data.Sampler):
 def get_lance_dataset(args, preprocess_img, is_train, epoch=0, tokenizer=None, is_continual=False):
     """Lance counterpart of get_wds_dataset, yielding the same batches.
 
-    The dataset size and shard layout come from the <dataset>.manifest.json that wds_to_lance.py writes next to it.
+    The dataset size and shard layout come from the <dataset>.manifest.json next to it.
     """
     if is_continual:
         raise ValueError("--continual-data must be webdataset shards: use --dataset-type auto")
