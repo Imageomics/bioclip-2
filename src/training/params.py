@@ -69,7 +69,7 @@ def parse_args(args):
         "--dataset-type",
         choices=["webdataset", "csv", "synthetic", "lance", "auto"],
         default="auto",
-        help="Which type of dataset to process. 'lance' reads datasets written by wds_to_lance.py (needs pylance)."
+        help="Which type of dataset to process."
     )
     parser.add_argument(
         "--dataset-resampled",

@@ -68,8 +68,7 @@ class DataInfo:
     def set_epoch(self, epoch):
         if self.shared_epoch is not None:
             self.shared_epoch.set_value(epoch)
-        # hasattr rather than isinstance(DistributedSampler): the Lance batch samplers have set_epoch too
-        if self.sampler is not None and hasattr(self.sampler, "set_epoch"):
+        if self.sampler is not None and isinstance(self.sampler, DistributedSampler):
             self.sampler.set_epoch(epoch)
 
 
@@ -599,23 +598,21 @@ class LanceTrainBatchSampler(torch.utils.data.Sampler):
     All draws are seeded by (seed, epoch, rank, worker).
     """
 
-    def __init__(self, shards, batch_size, num_worker_batches, num_workers, rank, seed, epoch=0):
+    def __init__(self, shards, batch_size, num_worker_batches, num_workers, rank, seed, shared_epoch):
         self.shards = shards  # [(name, num_rows, row_offset)] in tar order
         self.batch_size = batch_size
         self.num_worker_batches = num_worker_batches
         self.num_workers = max(1, num_workers)
         self.rank = rank
         self.seed = seed
-        self.epoch = epoch
-
-    def set_epoch(self, epoch):
-        self.epoch = epoch
+        self.shared_epoch = shared_epoch  # set by DataInfo.set_epoch, as for webdataset
 
     def __len__(self):
         return self.num_worker_batches * self.num_workers
 
     def worker_batches(self, worker):
-        tag = f"tol-lance-v1|seed={self.seed}|epoch={self.epoch}|rank={self.rank}|worker={worker}"
+        epoch = self.shared_epoch.get_value()
+        tag = f"tol-lance-v1|seed={self.seed}|epoch={epoch}|rank={self.rank}|worker={worker}"
         rng_shards, rng_buffer = random.Random(tag + "|shards"), random.Random(tag + "|buffer")
 
         def rows():
@@ -667,6 +664,7 @@ def get_lance_dataset(args, preprocess_img, is_train, epoch=0, tokenizer=None, i
     else:
         text_columns = [args.text_type]
     dataset = LanceDataset(uri, text_columns, preprocess_img, tokenizer)
+    shared_epoch = SharedEpoch(epoch=epoch)
 
     if is_train:
         if not args.dataset_resampled:
@@ -678,7 +676,7 @@ def get_lance_dataset(args, preprocess_img, is_train, epoch=0, tokenizer=None, i
         num_batches = num_worker_batches * num_workers
         num_samples = num_batches * global_batch_size
         sampler = LanceTrainBatchSampler(
-            shards, args.batch_size, num_worker_batches, args.workers, args.rank, args.seed, epoch)
+            shards, args.batch_size, num_worker_batches, args.workers, args.rank, args.seed, shared_epoch)
     else:
         num_samples = manifest["num_rows"]
         num_batches = math.ceil(num_samples / args.batch_size)
@@ -693,7 +691,7 @@ def get_lance_dataset(args, preprocess_img, is_train, epoch=0, tokenizer=None, i
     )
     dataloader.num_batches = num_batches
     dataloader.num_samples = num_samples
-    return DataInfo(dataloader=dataloader, sampler=sampler)
+    return DataInfo(dataloader=dataloader, shared_epoch=shared_epoch)
 
 
 def get_dataset_fn(data_path, dataset_type):
