@@ -1,4 +1,5 @@
 import ast
+import io
 import json
 import logging
 import math
@@ -558,6 +559,141 @@ def get_synthetic_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None
     return DataInfo(dataloader, sampler)
 
 
+def _lance_collate(batch):
+    return batch  # LanceDataset.__getitems__ already returns a whole batch
+
+
+class LanceDataset(Dataset):
+    """A Lance dataset with one column per webdataset tar member.
+
+    The batch sampler hands a whole batch of row ids to __getitems__, which reads, decodes, transforms and
+    tokenizes them inside the DataLoader worker, as the webdataset pipeline does.
+    """
+
+    def __init__(self, uri, text_columns, preprocess_img, tokenizer):
+        self.uri = uri
+        self.text_columns = text_columns
+        self.preprocess_img = preprocess_img
+        self.tokenizer = tokenizer
+        self.ds = None  # opened inside each worker, because lance is not fork-safe
+
+    def __getitems__(self, rows):
+        if self.ds is None:
+            import lance
+            self.ds = lance.dataset(self.uri)
+        table = self.ds.take(rows, columns=["jpg", *self.text_columns])
+        images = torch.stack([
+            self.preprocess_img(Image.open(io.BytesIO(jpg)).convert("RGB"))
+            for jpg in table.column("jpg").to_pylist()
+        ])
+        texts = [self.tokenizer(table.column(c).to_pylist()) for c in self.text_columns]
+        return (images, *texts)
+
+
+class LanceTrainBatchSampler(torch.utils.data.Sampler):
+    """Replays get_wds_dataset's resampled training stream on row ids, so batches have the same composition.
+
+    Like a webdataset worker, each stream draws shards with replacement, reads their rows in tar order through
+    the same shuffle buffer and cuts full batches; the DataLoader takes one batch from each worker in turn.
+    All draws are seeded by (seed, epoch, rank, worker).
+    """
+
+    def __init__(self, shards, batch_size, num_worker_batches, num_workers, rank, seed, shared_epoch):
+        self.shards = shards  # [(name, num_rows, row_offset)] in tar order
+        self.batch_size = batch_size
+        self.num_worker_batches = num_worker_batches
+        self.num_workers = max(1, num_workers)
+        self.rank = rank
+        self.seed = seed
+        self.shared_epoch = shared_epoch  # set by DataInfo.set_epoch, as for webdataset
+
+    def __len__(self):
+        return self.num_worker_batches * self.num_workers
+
+    def worker_batches(self, worker):
+        epoch = self.shared_epoch.get_value()
+        tag = f"tol-lance-v1|seed={self.seed}|epoch={epoch}|rank={self.rank}|worker={worker}"
+        rng_shards, rng_buffer = random.Random(tag + "|shards"), random.Random(tag + "|buffer")
+
+        def rows():
+            while True:
+                _, num_rows, offset = self.shards[rng_shards.randrange(len(self.shards))]
+                yield from range(offset, offset + num_rows)
+
+        stream = _shuffle(rows(), _SAMPLE_SHUFFLE_SIZE, _SAMPLE_SHUFFLE_INITIAL, rng_buffer)
+        return [sorted(next(stream) for _ in range(self.batch_size)) for _ in range(self.num_worker_batches)]
+
+    def __iter__(self):
+        streams = [self.worker_batches(w) for w in range(self.num_workers)]
+        for i in range(len(self)):
+            yield streams[i % self.num_workers][i // self.num_workers]
+
+
+class LanceValBatchSampler(torch.utils.data.Sampler):
+    """get_wds_dataset's validation batches: worker w reads shards w, w + W, ... in tar order and batches their rows
+    (its last batch may be partial); the DataLoader takes one batch from each worker in turn."""
+
+    def __init__(self, shards, batch_size, num_workers):
+        num_workers = max(1, num_workers)
+        streams = []
+        for w in range(num_workers):
+            rows = [r for _, num_rows, offset in shards[w::num_workers] for r in range(offset, offset + num_rows)]
+            streams.append([rows[i:i + batch_size] for i in range(0, len(rows), batch_size)])
+        self.batches = [s[i] for i in range(max(map(len, streams))) for s in streams if i < len(s)]
+
+    def __len__(self):
+        return len(self.batches)
+
+    def __iter__(self):
+        return iter(self.batches)
+
+
+def get_lance_dataset(args, preprocess_img, is_train, epoch=0, tokenizer=None, is_continual=False):
+    """Lance counterpart of get_wds_dataset, yielding the same batches.
+
+    The dataset size and shard layout come from the <dataset>.manifest.json next to it.
+    """
+    if is_continual:
+        raise ValueError("--continual-data must be webdataset shards: use --dataset-type auto")
+    uri = args.train_data if is_train else args.val_data
+    with open(uri + ".manifest.json") as f:
+        manifest = json.load(f)
+    shards = [(s["name"], s["rows"], s["offset"]) for s in manifest["shards"]]
+    if args.text_type == "random":
+        text_columns = ["sci", "com", "taxon", "sci_com", "taxon_com"]  # in the order train.py unpacks them
+    else:
+        text_columns = [args.text_type]
+    dataset = LanceDataset(uri, text_columns, preprocess_img, tokenizer)
+    shared_epoch = SharedEpoch(epoch=epoch)
+
+    if is_train:
+        if not args.dataset_resampled:
+            raise ValueError("--dataset-type lance trains with --dataset-resampled only")
+        # the same padded epoch as get_wds_dataset
+        num_workers = max(1, args.workers)
+        global_batch_size = args.batch_size * args.world_size
+        num_worker_batches = math.ceil(math.ceil(manifest["num_rows"] / global_batch_size) / num_workers)
+        num_batches = num_worker_batches * num_workers
+        num_samples = num_batches * global_batch_size
+        sampler = LanceTrainBatchSampler(
+            shards, args.batch_size, num_worker_batches, args.workers, args.rank, args.seed, shared_epoch)
+    else:
+        num_samples = manifest["num_rows"]
+        num_batches = math.ceil(num_samples / args.batch_size)
+        sampler = LanceValBatchSampler(shards, args.batch_size, args.workers)
+
+    dataloader = DataLoader(
+        dataset,
+        batch_sampler=sampler,
+        collate_fn=_lance_collate,
+        num_workers=args.workers,
+        persistent_workers=args.workers > 0,
+    )
+    dataloader.num_batches = num_batches
+    dataloader.num_samples = num_samples
+    return DataInfo(dataloader=dataloader, shared_epoch=shared_epoch)
+
+
 def get_dataset_fn(data_path, dataset_type):
     if dataset_type == "webdataset":
         return get_wds_dataset
@@ -565,12 +701,16 @@ def get_dataset_fn(data_path, dataset_type):
         return get_csv_dataset
     elif dataset_type == "synthetic":
         return get_synthetic_dataset
+    elif dataset_type == "lance":
+        return get_lance_dataset
     elif dataset_type == "auto":
         ext = data_path.split('.')[-1]
         if ext in ['csv', 'tsv']:
             return get_csv_dataset
         elif ext in ['tar']:
             return get_wds_dataset
+        elif ext in ['lance']:
+            return get_lance_dataset
         else:
             raise ValueError(
                 f"Tried to figure out dataset type, but failed for extension {ext}.")
