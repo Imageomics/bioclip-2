@@ -155,8 +155,12 @@
 
     <h2 class="banded">Demo</h2>
         
-    <script type="module" src="https://gradio.s3-us-west-2.amazonaws.com/5.33.0/gradio.js"></script>
-    <gradio-app src="https://imageomics-bioclip-2-demo.hf.space"></gradio-app>
+    <iframe id="bioclip-demo" src="https://imageomics-bioclip-2-demo.hf.space/?__theme=light" title="BioCLIP 2 demo"
+            allow="clipboard-write" scrolling="no" style="display: block; width: min(1200px, calc(100vw - 40px)); margin-left: 50%; transform: translateX(-50%); min-height: 600px; border: 0;"></iframe>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/iframe-resizer/4.3.1/iframeResizer.min.js"></script>
+    <script>
+      iFrameResize({ checkOrigin: ["https://imageomics-bioclip-2-demo.hf.space"], heightCalculationMethod: "taggedElement" }, "#bioclip-demo");
+    </script>
 
     <h2 class="banded" id="evaluation">Experiments</h2>
     <p>
